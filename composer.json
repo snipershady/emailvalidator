@@ -1,0 +1,55 @@
+{
+    "name": "snipershady/emailvalidator",
+    "description": "Simple, clean and reliable email validator for PHP >= 8.3: syntax, RFC 5322 format and MX/Null-MX record checks, with sanitized-address retrieval.",
+    "type": "library",
+    "require": {
+        "php": ">=8.3",
+        "snipershady/typeidentifier": "^2.0"
+    },
+    "license": "GPL-2.0-only",
+    "authors": [
+        {
+            "name": "Stefano Perrini",
+            "email": "snipershady@gmail.com"
+        }
+    ],
+    "require-dev": {
+        "phpstan/phpstan": "^2.0",
+        "phpunit/phpunit": "^11.0",
+        "rector/rector": "^2.0",
+        "friendsofphp/php-cs-fixer": "^3.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "EmailValidator\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "EmailValidator\\Tests\\": "tests/"
+        },
+        "files": [
+            "tests/Support/dns_function_overrides.php"
+        ]
+    },
+    "config": {
+        "sort-packages": true,
+        "preferred-install": "dist"
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true,
+    "scripts": {
+        "test": "phpunit",
+        "test-coverage": "XDEBUG_MODE=coverage phpunit --coverage-text",
+        "stan": "phpstan analyse",
+        "cs": "php-cs-fixer fix --diff --dry-run",
+        "cs-fix": "php-cs-fixer fix",
+        "rector": "rector process --dry-run",
+        "rector-fix": "rector process",
+        "check": [
+            "@cs",
+            "@stan",
+            "@test"
+        ]
+    }
+}
