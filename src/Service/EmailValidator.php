@@ -7,7 +7,6 @@ namespace EmailValidator\Service;
 use EmailValidator\Dto\EmailValidationResult;
 use EmailValidator\Enum\EmailError;
 use TypeIdentifier\Service\EffectivePrimitiveTypeIdentifierService;
-use TypeIdentifier\Service\EffectivePrimitiveTypeIdentifierServiceInterface;
 
 /**
  * Validazione email per PHP >= 8.3.
@@ -58,11 +57,12 @@ final readonly class EmailValidator
 
     private MxResolver $mxResolver;
 
-    private EffectivePrimitiveTypeIdentifierServiceInterface $effectivePrimitiveTypeIdentifierService;
+    // Dettaglio implementativo della coercizione a stringa, non un punto di
+    // estensione: non viene esposto nel costruttore.
+    private EffectivePrimitiveTypeIdentifierService $effectivePrimitiveTypeIdentifierService;
 
     public function __construct(
         ?MxResolver $mxResolver = null,
-        ?EffectivePrimitiveTypeIdentifierServiceInterface $effectivePrimitiveTypeIdentifierService = null,
         /**
          * Se true, validate() rifiuta (EmailError::GMAIL_ALIAS) un indirizzo
          * che {@see isGmailAlias()} riconosce come alias di Gmail. Disattivato
@@ -80,7 +80,7 @@ final readonly class EmailValidator
         private bool $safeLocalPart = false,
     ) {
         $this->mxResolver = $mxResolver ?? new DnsMxResolver();
-        $this->effectivePrimitiveTypeIdentifierService = $effectivePrimitiveTypeIdentifierService ?? new EffectivePrimitiveTypeIdentifierService();
+        $this->effectivePrimitiveTypeIdentifierService = new EffectivePrimitiveTypeIdentifierService();
     }
 
     public function validate(mixed $input): EmailValidationResult

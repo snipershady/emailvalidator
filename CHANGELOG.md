@@ -16,6 +16,25 @@ Il formato segue [Keep a Changelog](https://keepachangelog.com/it-IT/1.1.0/) e i
   **Costo:** una query A e una AAAA in più per ogni host MX (es. 11 query invece di 1 per un dominio con 5 MX). Vedi [Protezione SSRF sugli host MX](README.md#protezione-ssrf-sugli-host-mx-attiva-di-default).
 - **`isGmailAlias()` e `canonicalGmailAddress()` validano l'input.** Applicano gli stessi controlli di sanitize, sintassi e formato di `validate()` (senza verifica MX): per un indirizzo non valido restituiscono rispettivamente `false` e `null`. In particolare `mario.rossi@gmail.com.` (punto finale sul dominio) non è più riconosciuto come alias.
 
+### Rimosso
+
+- **Parametro `$effectivePrimitiveTypeIdentifierService` del costruttore di `EmailValidator`.** La coercizione a stringa dell'input è un dettaglio implementativo della libreria, non un punto di estensione: il servizio di `snipershady/typeidentifier` viene ora istanziato internamente. Chi usa gli argomenti nominati (`new EmailValidator(rejectGmailAlias: true)`) o passa solo il resolver non deve cambiare nulla; chi passava gli argomenti **per posizione** deve aggiornare la chiamata, perché `rejectGmailAlias` e `safeLocalPart` scalano di una posizione:
+  ```php
+  // prima
+  new EmailValidator($resolver, null, true);
+  // ora
+  new EmailValidator($resolver, rejectGmailAlias: true);
+  ```
+  Il README documenta ora le firme complete dei costruttori nella nuova sezione [Configurazione](README.md#configurazione).
+
+### Documentazione
+
+- README: nuova sezione [Configurazione](README.md#configurazione) con le firme complete dei costruttori di `EmailValidator` e `DnsMxResolver`, i loro default, un esempio con argomenti nominati e l'indicazione di istanziare il validatore una sola volta come servizio condiviso.
+- README: nuova sezione [Protezione SSRF sugli host MX](README.md#protezione-ssrf-sugli-host-mx-attiva-di-default).
+- README: l'esempio di traduzione dei messaggi d'errore accedeva a `getError()->name` senza controllare che la validazione fosse fallita, quindi su un indirizzo valido (`getError()` restituisce `null`) generava un errore. Ora verifica prima il `null`.
+- README: precisato che anche le righe con esito positivo della tabella introduttiva dipendono dal DNS.
+- Tutti gli esempi PHP del README sono stati eseguiti contro il codice di questa versione.
+
 ### Sicurezza
 
 - **Target MX che non sono nomi di dominio sempre scartati** (anche con `rejectNonPublicHosts: false`). `FILTER_VALIDATE_DOMAIN` con `FILTER_FLAG_HOSTNAME` accettava come target MX address literal (`127.0.0.1`, `10.0.0.1`, `169.254.169.254`), nomi a una sola label (`localhost`) e forme numeriche non canoniche (`127.1`, `0177.0.0.1`, `0x7f.0.0.1`, `2130706433`) che `FILTER_VALIDATE_IP` non riconosce ma che `getaddrinfo()`/`inet_aton()` risolvono verso un IP: `getMxHosts()` poteva così restituire host di loopback o della rete interna, con SSRF diretto per chi fa probing SMTP. Ora il target deve avere almeno due label e un TLD alfabetico o punycode, come richiede RFC 5321 §5.1.

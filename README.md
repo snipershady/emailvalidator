@@ -25,7 +25,7 @@ Valida un indirizzo email attraverso una pipeline a più livelli — sintassi, f
 | `"user@example.com"` | `false` | `NULL_MX` | il dominio esiste ma dichiara esplicitamente (RFC 7505) di non accettare email — `filter_var()` non ha modo di saperlo |
 | `"user@dominio-inesistente-xyz123.it"` | `false` | `NO_MX_RECORD` | il dominio non ha alcun server di posta configurato — `filter_var()` non ha modo di saperlo |
 
-Le ultime due righe dipendono dallo stato DNS reale al momento della chiamata (qui verificato con risoluzione live); il resto della tabella è deterministico. In breve: se ti basta sapere che una stringa "assomiglia" a un'email, `filter_var()` basta; se devi sapere che quell'indirizzo può ricevere posta *adesso*, e vuoi che un input ambiguo venga segnalato invece che silenziosamente riscritto, è per questo che esiste questa libreria.
+Le righe con esito `true` e le ultime due dipendono dallo stato DNS reale al momento della chiamata (qui verificato con risoluzione live); il resto della tabella è deterministico, perché l'indirizzo viene rifiutato prima di qualunque query DNS. In breve: se ti basta sapere che una stringa "assomiglia" a un'email, `filter_var()` basta; se devi sapere che quell'indirizzo può ricevere posta *adesso*, e vuoi che un input ambiguo venga segnalato invece che silenziosamente riscritto, è per questo che esiste questa libreria.
 
 Le modifiche di ogni versione, inclusi i cambi di comportamento e le correzioni di sicurezza, sono elencate nel [CHANGELOG](CHANGELOG.md).
 
@@ -74,6 +74,44 @@ if ($result->isValid()) {
 - `null`, array (anche annidati in profondità) e oggetti producono `EMPTY_ADDRESS` senza essere attraversati;
 - una stringa grezza oltre 1024 byte (spazi inclusi) produce `TOO_LONG` prima di qualunque elaborazione.
 
+### Configurazione
+
+`EmailValidator` non richiede alcuna dipendenza esterna: `new EmailValidator()` è già pronto all'uso, con risoluzione DNS reale e protezione SSRF attiva. Il costruttore accetta solo il resolver MX e due opzioni, tutte facoltative:
+
+```php
+public function __construct(
+    ?MxResolver $mxResolver = null,   // default: new DnsMxResolver()
+    bool $rejectGmailAlias = false,   // rifiuta gli alias Gmail, vedi "Alias Gmail"
+    bool $safeLocalPart = false,      // local part limitato a [A-Za-z0-9._+-], vedi "Sicurezza"
+)
+```
+
+Le opzioni di risoluzione DNS appartengono invece a `DnsMxResolver`:
+
+```php
+public function __construct(
+    bool $allowImplicitMx = false,     // senza MX accetta un record A/AAAA (RFC 5321 §5.1)
+    bool $rejectNonPublicHosts = true, // scarta gli host MX non pubblici, vedi "Protezione SSRF sugli host MX"
+)
+```
+
+Si consiglia di passare le opzioni come **argomenti nominati**: restano leggibili e non dipendono dall'ordine dei parametri.
+
+```php
+use EmailValidator\Service\DnsMxResolver;
+use EmailValidator\Service\EmailValidator;
+
+$validator = new EmailValidator(
+    mxResolver: new DnsMxResolver(allowImplicitMx: true),
+    rejectGmailAlias: true,
+    safeLocalPart: true,
+);
+```
+
+La coercizione a stringa dell'input usa internamente [`snipershady/typeidentifier`](https://packagist.org/packages/snipershady/typeidentifier), installata da Composer come dipendenza: è un dettaglio implementativo e non va né istanziata né passata dal client. L'unico collaboratore sostituibile è il resolver MX (vedi [Risoluzione MX](#risoluzione-mx-iniezione-e-test)).
+
+`EmailValidator` è immutabile (`final readonly`) e senza stato tra una chiamata e l'altra: istanzialo una sola volta, per esempio come servizio condiviso nel container di dipendenze, e riusalo per tutte le validazioni.
+
 ### `EmailValidationResult`: leggere l'esito
 
 | Metodo | Ritorna | Descrizione |
@@ -116,7 +154,11 @@ $messages = [
     // ...
 ];
 
-echo $messages[$result->getError()->name] ?? $result->getError()->value;
+$error = $result->getError(); // null se l'indirizzo è valido
+
+if (null !== $error) {
+    echo $messages[$error->name] ?? $error->value;
+}
 ```
 
 ### Pipeline di validazione
