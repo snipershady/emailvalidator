@@ -1,5 +1,7 @@
 # emailvalidator
 
+[![CI](https://github.com/snipershady/emailvalidator/actions/workflows/ci.yml/badge.svg)](https://github.com/snipershady/emailvalidator/actions/workflows/ci.yml)
+
 Simple, easy, clean, and useful email validator. Nothing you can't build yourself, but it's ready to use and always up to date.
 
 Valida un indirizzo email attraverso una pipeline a più livelli — sintassi, formato RFC 5322/5321 e verifica dei record MX (con rilevamento del Null MX, RFC 7505) — e restituisce l'indirizzo sanitizzato quando la validazione ha esito positivo.
@@ -178,6 +180,16 @@ composer check          # cs + stan + test
 ```
 
 La suite unitaria copre il 100% di classi, metodi e linee di `src/` (verificato con Xdebug). La risoluzione DNS è testata sostituendo le funzioni globali `checkdnsrr()`/`dns_get_record()` con un doppio controllabile (vedi `tests/Support/`), così ogni esito — MX valido, Null MX, nessun MX, implicit MX, errore DNS — è verificato senza dipendere dalla rete; i test in `tests/Integration/` restano invece a fare da riscontro con DNS reale.
+
+### CI
+
+Il workflow GitHub Actions (`.github/workflows/ci.yml`) gira su ogni push/PR su `main` con tre job:
+
+- **lint** — `composer validate`, PHPStan (max), PHP-CS-Fixer (dry-run) e Rector (dry-run), eseguiti una sola volta sulla versione minima supportata (PHP 8.3).
+- **test** — la suite PHPUnit (con coverage) su una matrice PHP 8.3 / 8.4 / 8.5, per garantire la compatibilità dichiarata in `composer.json`.
+- **network-tests** — i test di integrazione con DNS reale (`tests/Integration/`), eseguiti ma non bloccanti (`continue-on-error`), perché dipendono dallo stato di domini di terze parti.
+
+Nessun `composer.lock` è versionato: ogni run risolve le dipendenze contro i vincoli correnti di `composer.json`, così la CI segnala per prima eventuali incompatibilità con nuove versioni delle dipendenze.
 
 ## Licenza
 
