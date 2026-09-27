@@ -35,6 +35,10 @@ Il formato segue [Keep a Changelog](https://keepachangelog.com/it-IT/1.1.0/) e i
 - README: precisato che anche le righe con esito positivo della tabella introduttiva dipendono dal DNS.
 - Tutti gli esempi PHP del README sono stati eseguiti contro il codice di questa versione.
 
+### Corretto
+
+- CI: il test di integrazione `testReturnsDnsFailureOnServfail` falliva sui runner GitHub Actions, il cui resolver non valida DNSSEC. Il test deduceva la validazione dall'esito della query MX su `dnssec-failed.org`, ma quel dominio non ha record MX: con un resolver non validante la risposta è NODATA e la libreria restituisce correttamente `NO_MX_RECORD`. Ora il test verifica prima se il record A del dominio risolve, e in quel caso viene saltato.
+
 ### Sicurezza
 
 - **Target MX che non sono nomi di dominio sempre scartati** (anche con `rejectNonPublicHosts: false`). `FILTER_VALIDATE_DOMAIN` con `FILTER_FLAG_HOSTNAME` accettava come target MX address literal (`127.0.0.1`, `10.0.0.1`, `169.254.169.254`), nomi a una sola label (`localhost`) e forme numeriche non canoniche (`127.1`, `0177.0.0.1`, `0x7f.0.0.1`, `2130706433`) che `FILTER_VALIDATE_IP` non riconosce ma che `getaddrinfo()`/`inet_aton()` risolvono verso un IP: `getMxHosts()` poteva così restituire host di loopback o della rete interna, con SSRF diretto per chi fa probing SMTP. Ora il target deve avere almeno due label e un TLD alfabetico o punycode, come richiede RFC 5321 §5.1.
