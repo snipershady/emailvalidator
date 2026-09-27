@@ -27,6 +27,8 @@ Valida un indirizzo email attraverso una pipeline a più livelli — sintassi, f
 
 Le ultime due righe dipendono dallo stato DNS reale al momento della chiamata (qui verificato con risoluzione live); il resto della tabella è deterministico. In breve: se ti basta sapere che una stringa "assomiglia" a un'email, `filter_var()` basta; se devi sapere che quell'indirizzo può ricevere posta *adesso*, e vuoi che un input ambiguo venga segnalato invece che silenziosamente riscritto, è per questo che esiste questa libreria.
 
+Le modifiche di ogni versione, inclusi i cambi di comportamento e le correzioni di sicurezza, sono elencate nel [CHANGELOG](CHANGELOG.md).
+
 ## Requisiti
 
 - PHP >= 8.3
@@ -79,7 +81,7 @@ if ($result->isValid()) {
 | `isValid(): bool` | `bool` | esito complessivo della validazione |
 | `getEmail(): string` | `string` | indirizzo raggiunto dalla pipeline, valido o meno — **se non valido è input utente non fidato**, vedi [Sicurezza](#sicurezza) |
 | `getSanitizedEmail(): ?string` | `string\|null` | indirizzo sanitizzato, solo se `isValid()` è `true`; altrimenti `null` |
-| `getMxHosts(): array` | `list<string>` | host MX del dominio, ordinati per priorità (vuoto se non valido) |
+| `getMxHosts(): array` | `list<string>` | host MX del dominio, ordinati per priorità (vuoto se non valido); con il resolver di default contiene solo host che risolvono verso indirizzi pubblici, vedi [Protezione SSRF](#protezione-ssrf-sugli-host-mx-attiva-di-default) |
 | `getError(): ?EmailError` | `EmailError\|null` | motivo del fallimento; `null` se valido |
 
 ### `EmailError`: i possibili motivi di fallimento
@@ -100,6 +102,8 @@ EmailError::GMAIL_ALIAS;      // Address is a Gmail alias
 EmailError::UNSAFE_LOCAL_PART;  // Local part contains characters outside the safe set
 EmailError::NON_PUBLIC_MX_HOST; // No MX host resolves only to public addresses
 ```
+
+`NON_PUBLIC_MX_HOST` indica che il dominio ha dei record MX, ma nessuno dei suoi host risolve esclusivamente verso indirizzi pubblici (vedi [Protezione SSRF](#protezione-ssrf-sugli-host-mx-attiva-di-default)).
 
 `NO_MX_RECORD` e `NULL_MX` sono esiti definitivi del DNS; `DNS_FAILURE` indica invece un errore transitorio (SERVFAIL, timeout, resolver irraggiungibile): in quel caso l'indirizzo non va considerato inesistente, ma conviene riprovare più tardi o accettarlo con riserva.
 
@@ -122,7 +126,7 @@ echo $messages[$result->getError()->name] ?? $result->getError()->value;
 3. **Formato** — regex stretta sul local part (dot-atom, RFC 5322) e sul dominio (label DNS + TLD, A-label IDNA valide).
 4. **Local part sicura** — opzionale, disattivata di default (vedi [Sicurezza](#sicurezza)).
 5. **Alias Gmail** — opzionale, disattivato di default (vedi sotto).
-6. **Record MX** — risoluzione DNS con rilevamento del Null MX (RFC 7505) e distinzione tra "record assente" ed "errore DNS".
+6. **Record MX** — risoluzione DNS con rilevamento del Null MX (RFC 7505), distinzione tra "record assente" ed "errore DNS" e, di default, scarto degli host MX che non risolvono verso indirizzi pubblici (vedi [Protezione SSRF](#protezione-ssrf-sugli-host-mx-attiva-di-default)).
 
 ### Risoluzione MX: iniezione e test
 
@@ -153,6 +157,58 @@ $validator = new EmailValidator(new DnsMxResolver(allowImplicitMx: true));
 ```
 
 Timeout e numero di tentativi delle query DNS dipendono dal resolver di sistema (`options timeout:N attempts:N` in `/etc/resolv.conf`): le funzioni DNS native di PHP non permettono di impostarli. Se la validazione è esposta a input pubblico, applica un rate limit a monte ed eventualmente implementa `MxResolver` con una libreria DNS che supporti timeout e cache.
+
+### Protezione SSRF sugli host MX (attiva di default)
+
+I record MX sono scelti da chi controlla il dominio, cioè, per un indirizzo inserito in un form, da chiunque. Chi registra `attaccante.com` può farne puntare l'MX a `127.0.0.1`, a un host della tua rete interna o all'endpoint dei metadati cloud (`169.254.169.254`). Se la tua applicazione si connette poi agli host di `getMxHosts()`, per esempio per una verifica SMTP (`RCPT TO`), senza filtro diventerebbe un proxy verso la tua rete interna (SSRF).
+
+Per questo `DnsMxResolver`, e quindi `new EmailValidator()` che lo usa di default, applica due livelli di difesa.
+
+**1. Target che non sono nomi di dominio — sempre scartati, non disattivabili.** RFC 5321 §5.1 richiede che il target di un MX sia un nome di dominio, mai un indirizzo. Vengono ignorati:
+
+| Target MX | Perché è scartato |
+| --- | --- |
+| `127.0.0.1`, `10.0.0.1`, `169.254.169.254` | address literal IPv4 |
+| `127.1`, `0177.0.0.1`, `0x7f.0.0.1`, `2130706433` | forme numeriche non canoniche: `FILTER_VALIDATE_IP` non le riconosce, ma `getaddrinfo()` / `inet_aton()` le risolvono comunque in `127.0.0.1` |
+| `localhost`, `mailserver` | nome a una sola label, risolto da `/etc/hosts` o dai search domain locali |
+| `mx.example.123` | TLD non alfabetico |
+
+Il target deve avere almeno due label e un TLD alfabetico (o IDN in punycode, `xn--…`).
+
+**2. Host che risolvono verso indirizzi non pubblici — scartati di default.** Per ogni host MX rimasto vengono risolti i record A e AAAA, e l'host viene tenuto solo se **tutti** i suoi indirizzi sono pubblici (`FILTER_FLAG_GLOBAL_RANGE`). Vengono quindi scartati gli host che risolvono, anche solo in parte, verso:
+
+- loopback (`127.0.0.0/8`, `::1`);
+- reti private (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `fc00::/7`);
+- link-local, incluso l'endpoint dei metadati cloud (`169.254.0.0/16`, `fe80::/10`);
+- gli altri range riservati o non instradabili.
+
+Un host senza alcun record A/AAAA viene scartato, perché non è raggiungibile. Lo stesso filtro vale per l'host implicito quando `allowImplicitMx` è attivo.
+
+Cosa vedi come client:
+
+```php
+$result = (new EmailValidator())->validate('utente@dominio.com');
+
+$result->getMxHosts();  // solo gli host sicuri, nell'ordine di priorità originale
+$result->getError();    // se nessun host è sicuro:
+                        //   EmailError::NON_PUBLIC_MX_HOST — tutti scartati
+                        //   EmailError::DNS_FAILURE        — nessuno sicuro e almeno una query A/AAAA fallita (riprova)
+```
+
+Se il dominio ha sia host pubblici sia host interni, l'indirizzo resta valido e `getMxHosts()` contiene solo quelli pubblici.
+
+**Costo.** Oltre alla query MX servono una query A e una AAAA per ogni host: un dominio con 5 MX (come `gmail.com`) richiede 11 query invece di 1. Se non ti connetti mai agli host MX e la latenza conta, o se valuti indirizzi di una rete interna i cui server di posta hanno davvero indirizzi privati, puoi disattivare il livello 2. Il livello 1 resta comunque attivo:
+
+```php
+use EmailValidator\Service\DnsMxResolver;
+use EmailValidator\Service\EmailValidator;
+
+$validator = new EmailValidator(new DnsMxResolver(rejectNonPublicHosts: false));
+```
+
+**Limite: DNS rebinding.** Il filtro verifica gli indirizzi al momento della validazione. Se poi ti connetti di nuovo *al nome*, un DNS malevolo può rispondere con un altro indirizzo (TTL a zero). Per chiudere anche questa finestra risolvi l'host una sola volta, riapplica il controllo `filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_GLOBAL_RANGE)` e connettiti a quell'IP.
+
+> **Cambio di comportamento.** Fino alla 1.0.2 il livello 2 era disattivato di default (`rejectNonPublicHosts: false`); vedi il [CHANGELOG](CHANGELOG.md). Chi valida indirizzi con server di posta su IP privati ora riceve `NON_PUBLIC_MX_HOST` e deve passare esplicitamente `rejectNonPublicHosts: false`.
 
 ### Alias Gmail (opzionale, disattivato di default)
 
@@ -201,15 +257,9 @@ Un indirizzo che supera `validate()` è **conforme alle RFC**, non automaticamen
 
 - **`getEmail()` sugli esiti falliti** restituisce ciò che l'utente ha inviato, inclusi `<`, `>`, `"` e CR/LF. Applica sempre l'escaping del contesto di destinazione (`htmlspecialchars()` in HTML, rimozione di CR/LF prima di scrivere nei log). Per un indirizzo pronto all'uso usa `getSanitizedEmail()`, che è `null` se la validazione è fallita.
 
-- **Host MX e SSRF.** Gli host restituiti da `getMxHosts()` sono scelti da chi controlla il dominio. I target che non sono un nome di dominio (address literal come `127.0.0.1`, forme numeriche come `127.1` o `0177.0.0.1`, nomi a una sola label come `localhost`) vengono sempre scartati, come richiede RFC 5321 §5.1; un nome regolare può però risolvere comunque verso `127.0.0.1`, la rete interna o un endpoint di metadati cloud. Se ti connetti a quegli host (es. verifica SMTP), abilita il filtro, che scarta gli host che non risolvono esclusivamente verso indirizzi pubblici:
+- **Host MX e SSRF.** Gli host restituiti da `getMxHosts()` sono scelti da chi controlla il dominio. Di default vengono scartati sia i target che non sono nomi di dominio sia gli host che risolvono verso indirizzi non pubblici; vedi [Protezione SSRF sugli host MX](#protezione-ssrf-sugli-host-mx-attiva-di-default) per i dettagli, il costo, come disattivarla e il limite del DNS rebinding (connettiti all'IP già verificato, non di nuovo al nome).
 
-  ```php
-  $validator = new EmailValidator(new DnsMxResolver(rejectNonPublicHosts: true));
-  ```
-
-  Il filtro costa una query A e una AAAA per host e non protegge dal DNS rebinding: connettiti all'IP già verificato, non di nuovo al nome.
-
-- **Costo delle query DNS.** Ogni `validate()` esegue almeno una query DNS verso un dominio scelto da chi invia l'input: su endpoint pubblici applica un rate limit.
+- **Costo delle query DNS.** Ogni `validate()` esegue query DNS verso un dominio scelto da chi invia l'input: una query MX, più una A e una AAAA per ogni host MX con la protezione SSRF attiva. Su endpoint pubblici applica un rate limit.
 
 ## Sviluppo
 

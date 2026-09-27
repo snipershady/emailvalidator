@@ -31,14 +31,16 @@ final readonly class DnsMxResolver implements MxResolver
         /** Se true, in assenza di MX accetta un record A/AAAA (implicit MX) */
         private bool $allowImplicitMx = false,
         /**
-         * Se true, scarta gli host MX che non risolvono verso almeno un
-         * indirizzo pubblico o che risolvono anche verso indirizzi privati,
-         * loopback, link-local o riservati (vedi {@see FILTER_FLAG_GLOBAL_RANGE}).
-         * Da attivare se il client si connette poi agli host MX (es. verifica
-         * SMTP), per evitare SSRF verso la rete interna. Costa una query A e
-         * una AAAA per ogni host.
+         * Attivo di default: scarta gli host MX che non risolvono verso almeno
+         * un indirizzo pubblico o che risolvono anche verso indirizzi privati,
+         * loopback, link-local o riservati (vedi {@see FILTER_FLAG_GLOBAL_RANGE}),
+         * così {@see resolve()} non restituisce mai host che portano a SSRF
+         * verso la rete interna se il client vi si connette (es. verifica
+         * SMTP). Costa una query A e una AAAA per ogni host. Va disattivato
+         * solo se i server di posta legittimi sono su indirizzi privati (es.
+         * validazione di indirizzi di una rete aziendale interna).
          */
-        private bool $rejectNonPublicHosts = false,
+        private bool $rejectNonPublicHosts = true,
     ) {
     }
 

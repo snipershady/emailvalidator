@@ -111,7 +111,7 @@ final class DnsMxResolverTest extends TestCase
             ['target' => 'mx.example.com', 'pri' => 10],
         ]]]);
 
-        $dnsMxResolver = new DnsMxResolver();
+        $dnsMxResolver = new DnsMxResolver(rejectNonPublicHosts: false);
 
         $this->assertSame(['mx.example.com'], $dnsMxResolver->resolve('example.com'));
     }
@@ -123,20 +123,20 @@ final class DnsMxResolverTest extends TestCase
             ['target' => 'mx.example.com', 'pri' => 10],
         ]]]);
 
-        $dnsMxResolver = new DnsMxResolver();
+        $dnsMxResolver = new DnsMxResolver(rejectNonPublicHosts: false);
 
         $this->assertSame(['mx.example.com'], $dnsMxResolver->resolve('example.com'));
     }
 
     #[DataProvider('addressLikeTargetProvider')]
-    public function testSkipsTargetsThatAreAddressLiteralsOrSingleLabel(string $target): void
+    public function testSkipsAddressLiteralTargetsEvenWithFilterDisabled(string $target): void
     {
         DnsStub::fake(['example.com.' => [DNS_MX => [
             ['target' => $target, 'pri' => 0],
             ['target' => 'mx.example.com', 'pri' => 10],
         ]]]);
 
-        $dnsMxResolver = new DnsMxResolver();
+        $dnsMxResolver = new DnsMxResolver(rejectNonPublicHosts: false);
 
         $this->assertSame(['mx.example.com'], $dnsMxResolver->resolve('example.com'));
     }
@@ -162,7 +162,7 @@ final class DnsMxResolverTest extends TestCase
     {
         DnsStub::fake(['example.com.' => [DNS_MX => [['target' => 'mx.example.xn--p1ai', 'pri' => 0]]]]);
 
-        $dnsMxResolver = new DnsMxResolver();
+        $dnsMxResolver = new DnsMxResolver(rejectNonPublicHosts: false);
 
         $this->assertSame(['mx.example.xn--p1ai'], $dnsMxResolver->resolve('example.com'));
     }
@@ -192,7 +192,7 @@ final class DnsMxResolverTest extends TestCase
             ['target' => 'mx1.example.com.', 'pri' => 10],
         ]]]);
 
-        $dnsMxResolver = new DnsMxResolver();
+        $dnsMxResolver = new DnsMxResolver(rejectNonPublicHosts: false);
 
         $this->assertSame(['mx1.example.com', 'mx2.example.com'], $dnsMxResolver->resolve('example.com'));
     }
@@ -204,12 +204,12 @@ final class DnsMxResolverTest extends TestCase
             'internal.example.com.' => [DNS_A => [['ip' => '10.0.0.5']]],
         ]);
 
-        $dnsMxResolver = new DnsMxResolver();
+        $dnsMxResolver = new DnsMxResolver(rejectNonPublicHosts: false);
 
         $this->assertSame(['internal.example.com'], $dnsMxResolver->resolve('example.com'));
     }
 
-    public function testDropsNonPublicHostsWhenFilterIsEnabled(): void
+    public function testDropsNonPublicHostsByDefault(): void
     {
         DnsStub::fake([
             'example.com.' => [DNS_MX => [
@@ -228,7 +228,7 @@ final class DnsMxResolverTest extends TestCase
             'public.example.com.' => [DNS_AAAA => [['ipv6' => '2606:2800:220:1::1']]],
         ]);
 
-        $dnsMxResolver = new DnsMxResolver(rejectNonPublicHosts: true);
+        $dnsMxResolver = new DnsMxResolver();
 
         $this->assertSame(['public.example.com'], $dnsMxResolver->resolve('example.com'));
     }
@@ -240,7 +240,7 @@ final class DnsMxResolverTest extends TestCase
             'internal.example.com.' => [DNS_A => [['ip' => '192.168.1.10']]],
         ]);
 
-        $dnsMxResolver = new DnsMxResolver(rejectNonPublicHosts: true);
+        $dnsMxResolver = new DnsMxResolver();
 
         $this->assertSame(EmailError::NON_PUBLIC_MX_HOST, $dnsMxResolver->resolve('example.com'));
     }
@@ -252,16 +252,16 @@ final class DnsMxResolverTest extends TestCase
             'mx.example.com.' => [DNS_AAAA => false],
         ]);
 
-        $dnsMxResolver = new DnsMxResolver(rejectNonPublicHosts: true);
+        $dnsMxResolver = new DnsMxResolver();
 
         $this->assertSame(EmailError::DNS_FAILURE, $dnsMxResolver->resolve('example.com'));
     }
 
-    public function testFiltersImplicitMxHostToo(): void
+    public function testFiltersImplicitMxHostByDefault(): void
     {
         DnsStub::fake(['example.com.' => [DNS_A => [['ip' => '127.0.0.1']]]]);
 
-        $dnsMxResolver = new DnsMxResolver(allowImplicitMx: true, rejectNonPublicHosts: true);
+        $dnsMxResolver = new DnsMxResolver(allowImplicitMx: true);
 
         $this->assertSame(EmailError::NON_PUBLIC_MX_HOST, $dnsMxResolver->resolve('example.com'));
     }
