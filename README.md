@@ -89,6 +89,7 @@ EmailError::INVALID_FORMAT;   // Invalid format
 EmailError::NULL_MX;          // Domain declares it does not accept email (Null MX)
 EmailError::NO_MX_RECORD;     // No MX record for domain
 EmailError::DNS_FAILURE;      // DNS resolution error
+EmailError::GMAIL_ALIAS;      // Address is a Gmail alias
 ```
 
 Ogni case è backed da una stringa in inglese pronta per essere mostrata (`$error->value`) oppure usata come chiave per una propria traduzione:
@@ -108,7 +109,8 @@ echo $messages[$result->getError()->name] ?? $result->getError()->value;
 1. **Sanitize** — coercizione a stringa, trim, normalizzazione del dominio (lowercase + IDN/punycode via `ext-intl`), `FILTER_SANITIZE_EMAIL`.
 2. **Sintassi** — `FILTER_VALIDATE_EMAIL` + limiti di lunghezza RFC 5321.
 3. **Formato** — regex stretta sul local part (dot-atom, RFC 5322) e sul dominio (label DNS + TLD).
-4. **Record MX** — risoluzione DNS con rilevamento del Null MX (RFC 7505).
+4. **Alias Gmail** — opzionale, disattivato di default (vedi sotto).
+5. **Record MX** — risoluzione DNS con rilevamento del Null MX (RFC 7505).
 
 ### Risoluzione MX: iniezione e test
 
@@ -136,6 +138,29 @@ use EmailValidator\Service\DnsMxResolver;
 use EmailValidator\Service\EmailValidator;
 
 $validator = new EmailValidator(new DnsMxResolver(allowImplicitMx: true));
+```
+
+### Alias Gmail (opzionale, disattivato di default)
+
+Gmail recapita nella stessa casella indirizzi scritti in forme diverse: i punti nel local part sono ignorati e tutto ciò che segue un `+` è un tag di subaddressing, quindi `mario.rossi@gmail.com`, `mariorossi@gmail.com` e `mariorossi+shop@gmail.com` sono lo stesso destinatario; anche il dominio `googlemail.com` è solo un sinonimo di `gmail.com`. Se la tua applicazione vuole impedire agli utenti di registrarsi più volte sfruttando questi alias, puoi usare `isGmailAlias()` in autonomia:
+
+```php
+$validator = new EmailValidator();
+
+$validator->isGmailAlias('mario.rossi+shop@gmail.com'); // true
+$validator->isGmailAlias('mariorossi@gmail.com');        // false (forma canonica)
+$validator->isGmailAlias('mario.rossi@example.com');     // false (non è Gmail)
+```
+
+Oppure chiedere esplicitamente a `validate()` di rifiutare gli alias, passando `rejectGmailAlias: true` al costruttore. **Il comportamento di default resta invariato** (gli alias sono accettati): è un'opzione che il client deve richiedere esplicitamente, non un vincolo imposto dalla libreria.
+
+```php
+$validator = new EmailValidator(rejectGmailAlias: true);
+
+$result = $validator->validate('mario.rossi+shop@gmail.com');
+
+$result->isValid();          // false
+$result->getError();         // EmailError::GMAIL_ALIAS
 ```
 
 ## Sviluppo

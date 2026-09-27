@@ -18,4 +18,5 @@ enum EmailError: string
     case NULL_MX = 'Domain declares it does not accept email (Null MX)';
     case NO_MX_RECORD = 'No MX record for domain';
     case DNS_FAILURE = 'DNS resolution error';
+    case GMAIL_ALIAS = 'Address is a Gmail alias';
 }

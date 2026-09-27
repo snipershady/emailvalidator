@@ -18,11 +18,13 @@ use PHPUnit\Framework\TestCase;
  */
 final class DnsMxResolverTest extends TestCase
 {
+    #[\Override]
     protected function setUp(): void
     {
         DnsStub::reset();
     }
 
+    #[\Override]
     protected function tearDown(): void
     {
         DnsStub::reset();

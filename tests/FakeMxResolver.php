@@ -19,6 +19,7 @@ final readonly class FakeMxResolver implements MxResolver
     ) {
     }
 
+    #[\Override]
     public function resolve(string $domain): array|EmailError
     {
         return $this->result;

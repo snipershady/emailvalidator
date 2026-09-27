@@ -16,7 +16,8 @@ use TypeIdentifier\Service\EffectivePrimitiveTypeIdentifierServiceInterface;
  *   1. Sanitize      → coercizione a stringa, trim, normalizzazione dominio (lowercase + IDN/punycode), FILTER_SANITIZE_EMAIL
  *   2. Sintassi      → FILTER_VALIDATE_EMAIL + limiti di lunghezza RFC 5321
  *   3. Formato       → regex stretta su local part (dot-atom) e dominio (label + TLD)
- *   4. Record MX     → risoluzione via {@see MxResolver}, con rilevamento Null MX (RFC 7505)
+ *   4. Alias Gmail   → opzionale, disattivato di default, vedi {@see isGmailAlias()}
+ *   5. Record MX     → risoluzione via {@see MxResolver}, con rilevamento Null MX (RFC 7505)
  */
 final readonly class EmailValidator
 {
@@ -44,6 +45,13 @@ final readonly class EmailValidator
     public function __construct(
         ?MxResolver $mxResolver = null,
         ?EffectivePrimitiveTypeIdentifierServiceInterface $effectivePrimitiveTypeIdentifierService = null,
+        /**
+         * Se true, validate() rifiuta (EmailError::GMAIL_ALIAS) un indirizzo
+         * che {@see isGmailAlias()} riconosce come alias di Gmail. Disattivato
+         * di default: è un'opzione esplicita del client, non un comportamento
+         * imposto dalla libreria.
+         */
+        private bool $rejectGmailAlias = false,
     ) {
         $this->mxResolver = $mxResolver ?? new DnsMxResolver();
         $this->effectivePrimitiveTypeIdentifierService = $effectivePrimitiveTypeIdentifierService ?? new EffectivePrimitiveTypeIdentifierService();
@@ -99,12 +107,52 @@ final readonly class EmailValidator
             return EmailValidationResult::fail($email, EmailError::INVALID_FORMAT);
         }
 
-        // ── 4. RECORD MX ───────────────────────────────────────────────
+        // ── 4. ALIAS GMAIL (opzionale) ──────────────────────────────────
+        if ($this->rejectGmailAlias && $this->isGmailAlias($email)) {
+            return EmailValidationResult::fail($email, EmailError::GMAIL_ALIAS);
+        }
+
+        // ── 5. RECORD MX ───────────────────────────────────────────────
         $mx = $this->mxResolver->resolve($domain);
 
         return $mx instanceof EmailError
             ? EmailValidationResult::fail($email, $mx)
             : EmailValidationResult::ok($email, $mx);
+    }
+
+    /**
+     * Funzionalità di validazione opzionale, richiamabile a prescindere da
+     * {@see validate()}: riconosce se $email è un "alias" di una casella
+     * Gmail, cioè un indirizzo diverso dalla forma canonica che Gmail
+     * recapita comunque nella stessa casella:
+     *
+     *  - punti nel local part ("mario.rossi@gmail.com" == "mariorossi@gmail.com");
+     *  - subaddressing con '+' ("mariorossi+shop@gmail.com");
+     *  - il dominio alternativo "googlemail.com", sinonimo di "gmail.com".
+     *
+     * Non richiede che $email sia già stato validato da {@see validate()}:
+     * un indirizzo sintatticamente non valido o non basato su Gmail
+     * restituisce semplicemente false.
+     */
+    public function isGmailAlias(string $email): bool
+    {
+        $at = strrpos($email, '@');
+        if (false === $at) {
+            return false;
+        }
+
+        $local = substr($email, 0, $at);
+        $domain = mb_strtolower(substr($email, $at + 1), 'UTF-8');
+
+        if ('googlemail.com' === $domain) {
+            return true;
+        }
+
+        if ('gmail.com' !== $domain) {
+            return false;
+        }
+
+        return str_contains($local, '.') || str_contains($local, '+');
     }
 
     /**

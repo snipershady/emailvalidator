@@ -18,6 +18,7 @@ final readonly class DnsMxResolver implements MxResolver
     ) {
     }
 
+    #[\Override]
     public function resolve(string $domain): array|EmailError
     {
         // Il punto finale rende il nome FQDN ed evita l'append dei search domain del resolver

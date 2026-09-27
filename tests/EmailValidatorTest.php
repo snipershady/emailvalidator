@@ -156,4 +156,63 @@ final class EmailValidatorTest extends TestCase
         $this->assertFalse($emailValidationResult->isValid());
         $this->assertSame(EmailError::NO_MX_RECORD, $emailValidationResult->getError());
     }
+
+    #[DataProvider('gmailAliasProvider')]
+    public function testIsGmailAliasRecognizesAliasForms(string $email, bool $expected): void
+    {
+        $emailValidator = new EmailValidator(new FakeMxResolver([]));
+
+        $this->assertSame($expected, $emailValidator->isGmailAlias($email));
+    }
+
+    /** @return iterable<string, array{string, bool}> */
+    public static function gmailAliasProvider(): iterable
+    {
+        yield 'dot in local part' => ['mario.rossi@gmail.com', true];
+        yield 'plus subaddress' => ['mariorossi+shop@gmail.com', true];
+        yield 'dot and plus combined' => ['mario.rossi+shop@gmail.com', true];
+        yield 'googlemail.com alternate domain' => ['mariorossi@googlemail.com', true];
+        yield 'googlemail.com is alias even with no dot or plus' => ['plain@googlemail.com', true];
+        yield 'canonical gmail address is not an alias' => ['mariorossi@gmail.com', false];
+        yield 'dot in local part on a non-gmail domain' => ['mario.rossi@example.com', false];
+        yield 'plus subaddress on a non-gmail domain' => ['mario+shop@example.com', false];
+        yield 'gmail.com is case-insensitive' => ['mario.rossi@GMAIL.COM', true];
+        yield 'string without an @ is never an alias' => ['not-an-email', false];
+    }
+
+    public function testDoesNotRejectGmailAliasByDefault(): void
+    {
+        $emailValidator = new EmailValidator(new FakeMxResolver(['mx.gmail.com']));
+
+        $emailValidationResult = $emailValidator->validate('mario.rossi+shop@gmail.com');
+
+        $this->assertTrue($emailValidationResult->isValid());
+        $this->assertSame('mario.rossi+shop@gmail.com', $emailValidationResult->getSanitizedEmail());
+    }
+
+    public function testRejectsGmailAliasWhenOptedIn(): void
+    {
+        $emailValidator = new EmailValidator(
+            mxResolver: new FakeMxResolver(['mx.gmail.com']),
+            rejectGmailAlias: true,
+        );
+
+        $emailValidationResult = $emailValidator->validate('mario.rossi+shop@gmail.com');
+
+        $this->assertFalse($emailValidationResult->isValid());
+        $this->assertSame(EmailError::GMAIL_ALIAS, $emailValidationResult->getError());
+    }
+
+    public function testAcceptsCanonicalGmailAddressEvenWhenOptedIn(): void
+    {
+        $emailValidator = new EmailValidator(
+            mxResolver: new FakeMxResolver(['mx.gmail.com']),
+            rejectGmailAlias: true,
+        );
+
+        $emailValidationResult = $emailValidator->validate('mariorossi@gmail.com');
+
+        $this->assertTrue($emailValidationResult->isValid());
+        $this->assertSame('mariorossi@gmail.com', $emailValidationResult->getSanitizedEmail());
+    }
 }
