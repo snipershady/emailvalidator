@@ -23,6 +23,10 @@ use EmailValidator\Enum\EmailError;
  */
 final readonly class DnsMxResolver implements MxResolver
 {
+    // TLD alfabetico o IDN in punycode, come in EmailValidator: esclude i
+    // target numerici che la libc interpreta come IP (127.1, 0177.0.0.1, 0x7f.1)
+    private const string TLD_REGEX = '/^(?:[a-z]{2,63}|xn--[a-z0-9-]{1,59})$/Di';
+
     public function __construct(
         /** Se true, in assenza di MX accetta un record A/AAAA (implicit MX) */
         private bool $allowImplicitMx = false,
@@ -69,8 +73,7 @@ final readonly class DnsMxResolver implements MxResolver
                 continue;
             }
 
-            // Target non conforme alla sintassi hostname: non utilizzabile
-            if (false === filter_var($target, FILTER_VALIDATE_DOMAIN, FILTER_FLAG_HOSTNAME)) {
+            if (!$this->isValidMxTarget($target)) {
                 continue;
             }
 
@@ -88,6 +91,27 @@ final readonly class DnsMxResolver implements MxResolver
         usort($hosts, static fn (array $a, array $b): int => $a['pri'] <=> $b['pri']);
 
         return $this->filterHosts(array_column($hosts, 'host'));
+    }
+
+    /**
+     * RFC 5321 §5.1: il target di un MX è un nome di dominio, mai un address
+     * literal. FILTER_FLAG_HOSTNAME da solo accetta "127.0.0.1", "10.0.0.1" e
+     * "localhost", oltre a forme numeriche non canoniche ("127.1",
+     * "0177.0.0.1", "2130706433") che FILTER_VALIDATE_IP non riconosce ma che
+     * getaddrinfo()/inet_aton() risolvono comunque verso un IP: si richiedono
+     * quindi almeno due label e un TLD alfabetico. Non sostituisce
+     * $rejectNonPublicHosts: un nome può sempre risolvere verso un indirizzo
+     * privato.
+     */
+    private function isValidMxTarget(string $target): bool
+    {
+        if (false === filter_var($target, FILTER_VALIDATE_DOMAIN, FILTER_FLAG_HOSTNAME)) {
+            return false;
+        }
+
+        $dot = strrpos($target, '.');
+
+        return false !== $dot && 1 === preg_match(self::TLD_REGEX, substr($target, $dot + 1));
     }
 
     /**

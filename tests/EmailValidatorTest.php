@@ -298,7 +298,9 @@ final class EmailValidatorTest extends TestCase
         yield 'string without an @ is never an alias' => ['not-an-email', false];
         yield 'uppercase in local part' => ['MarioRossi@gmail.com', true];
         yield 'domain case alone is not an alias' => ['mariorossi@GMAIL.COM', false];
-        yield 'trailing dot on domain' => ['mario.rossi@gmail.com.', true];
+        yield 'trailing dot on domain is invalid, not an alias' => ['mario.rossi@gmail.com.', false];
+        yield 'consecutive dots are invalid, not an alias' => ['mario..rossi@gmail.com', false];
+        yield 'leading dot is invalid, not an alias' => ['.mario.rossi@gmail.com', false];
         yield 'fullwidth unicode domain' => ["mario.rossi@\u{FF47}mail.com", true];
         yield 'lookalike domain is not gmail' => ['mario.rossi@gmail.com.evil.com', false];
     }
@@ -320,6 +322,15 @@ final class EmailValidatorTest extends TestCase
         yield 'empty canonical local part' => ['+tag@gmail.com', null];
         yield 'not gmail' => ['mario.rossi@example.com', null];
         yield 'no at sign' => ['not-an-email', null];
+        yield 'surrounding whitespace is trimmed' => [' Mario.Rossi@gmail.com ', 'mariorossi@gmail.com'];
+        yield 'uppercase unicode domain' => ["mario.rossi@\u{FF27}MAIL.COM", 'mariorossi@gmail.com'];
+        yield 'consecutive dots do not collide with the real mailbox' => ['mario..rossi@gmail.com', null];
+        yield 'leading dot does not collide with the real mailbox' => ['.mario.rossi@gmail.com', null];
+        yield 'trailing dot in local part' => ['mariorossi.@gmail.com', null];
+        yield 'trailing dots on domain are not stripped' => ['x@gmail.com..', null];
+        yield 'single trailing dot on domain' => ['mario.rossi@gmail.com.', null];
+        yield 'space in local part' => ['mario rossi@gmail.com', null];
+        yield 'quote in local part' => ['mario"x@gmail.com', null];
     }
 
     public function testDoesNotRejectGmailAliasByDefault(): void

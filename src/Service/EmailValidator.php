@@ -85,6 +85,39 @@ final readonly class EmailValidator
 
     public function validate(mixed $input): EmailValidationResult
     {
+        $email = $this->checkSyntax($input);
+        if ($email instanceof EmailValidationResult) {
+            return $email;
+        }
+
+        [$local, $domain] = $this->split($email);
+
+        // ── 4. LOCAL PART SICURA (opzionale) ────────────────────────────
+        if ($this->safeLocalPart && 1 !== preg_match(self::SAFE_LOCAL_REGEX, $local)) {
+            return EmailValidationResult::fail($email, EmailError::UNSAFE_LOCAL_PART);
+        }
+
+        // ── 5. ALIAS GMAIL (opzionale) ──────────────────────────────────
+        if ($this->rejectGmailAlias && $this->isValidatedGmailAlias($email)) {
+            return EmailValidationResult::fail($email, EmailError::GMAIL_ALIAS);
+        }
+
+        // ── 6. RECORD MX ───────────────────────────────────────────────
+        $mx = $this->mxResolver->resolve($domain);
+
+        return $mx instanceof EmailError
+            ? EmailValidationResult::fail($email, $mx)
+            : EmailValidationResult::ok($email, $mx);
+    }
+
+    /**
+     * Passi 1-3 della pipeline (sanitize, sintassi, formato), senza rete.
+     *
+     * @return string|EmailValidationResult l'indirizzo sanitizzato e
+     *                                      sintatticamente valido, oppure l'esito fallito
+     */
+    private function checkSyntax(mixed $input): string|EmailValidationResult
+    {
         // ── 1. SANITIZE ────────────────────────────────────────────────
         // Coercizione a stringa + trim: rende la pipeline sicura anche quando
         // $input arriva grezzo da fonti non fidate (form, querystring, JSON
@@ -149,22 +182,7 @@ final readonly class EmailValidator
             return EmailValidationResult::fail($email, EmailError::INVALID_FORMAT);
         }
 
-        // ── 4. LOCAL PART SICURA (opzionale) ────────────────────────────
-        if ($this->safeLocalPart && 1 !== preg_match(self::SAFE_LOCAL_REGEX, $local)) {
-            return EmailValidationResult::fail($email, EmailError::UNSAFE_LOCAL_PART);
-        }
-
-        // ── 5. ALIAS GMAIL (opzionale) ──────────────────────────────────
-        if ($this->rejectGmailAlias && $this->isGmailAlias($email)) {
-            return EmailValidationResult::fail($email, EmailError::GMAIL_ALIAS);
-        }
-
-        // ── 6. RECORD MX ───────────────────────────────────────────────
-        $mx = $this->mxResolver->resolve($domain);
-
-        return $mx instanceof EmailError
-            ? EmailValidationResult::fail($email, $mx)
-            : EmailValidationResult::ok($email, $mx);
+        return $email;
     }
 
     /**
@@ -178,12 +196,52 @@ final readonly class EmailValidator
      *  - maiuscole nel local part ("MarioRossi@gmail.com"): Gmail le ignora;
      *  - il dominio alternativo "googlemail.com", sinonimo di "gmail.com".
      *
-     * Il dominio viene normalizzato come in validate() (minuscole, IDN, punto
-     * finale), quindi anche forme come "GMAIL.COM." o "ｇｍａｉｌ.com" sono
-     * riconosciute. Non richiede che $email sia già stato validato: un
-     * indirizzo non basato su Gmail restituisce semplicemente false.
+     * $email passa per gli stessi controlli di sanitize, sintassi e formato
+     * di validate() (senza la verifica MX): un indirizzo non valido, come
+     * "mario..rossi@gmail.com" o "x@gmail.com.", non è mai un alias e
+     * restituisce false. Il dominio viene normalizzato come in validate()
+     * (minuscole, IDN), quindi anche "GMAIL.COM" o "ｇｍａｉｌ.com" sono
+     * riconosciuti.
      */
     public function isGmailAlias(string $email): bool
+    {
+        $email = $this->checkSyntax($email);
+
+        return is_string($email) && $this->isValidatedGmailAlias($email);
+    }
+
+    /**
+     * Forma canonica di un indirizzo Gmail ("mariorossi@gmail.com"), utile per
+     * riconoscere registrazioni duplicate fatte tramite alias: senza punti,
+     * senza tag '+', in minuscolo, sul dominio "gmail.com".
+     *
+     * Come {@see isGmailAlias()}, applica i controlli sintattici di
+     * validate(): restituisce null se $email non è un indirizzo valido (così
+     * "mario..rossi@gmail.com" non può collidere con la casella reale
+     * "mariorossi@gmail.com"), se non è Gmail o se il local part canonico
+     * risulterebbe vuoto (es. "+tag@gmail.com").
+     */
+    public function canonicalGmailAddress(string $email): ?string
+    {
+        $email = $this->checkSyntax($email);
+        if (!is_string($email)) {
+            return null;
+        }
+
+        $parts = $this->splitGmail($email);
+        if (null === $parts) {
+            return null;
+        }
+
+        $local = $this->canonicalGmailLocal($parts[0]);
+
+        return '' === $local ? null : $local . '@gmail.com';
+    }
+
+    /**
+     * @param string $email indirizzo già passato da {@see checkSyntax()}
+     */
+    private function isValidatedGmailAlias(string $email): bool
     {
         $parts = $this->splitGmail($email);
         if (null === $parts) {
@@ -196,41 +254,20 @@ final readonly class EmailValidator
     }
 
     /**
-     * Forma canonica di un indirizzo Gmail ("mariorossi@gmail.com"), utile per
-     * riconoscere registrazioni duplicate fatte tramite alias: senza punti,
-     * senza tag '+', in minuscolo, sul dominio "gmail.com".
-     * Restituisce null se $email non è un indirizzo Gmail o se il local part
-     * canonico risulterebbe vuoto (es. "+tag@gmail.com").
-     */
-    public function canonicalGmailAddress(string $email): ?string
-    {
-        $parts = $this->splitGmail($email);
-        if (null === $parts) {
-            return null;
-        }
-
-        $local = $this->canonicalGmailLocal($parts[0]);
-
-        return '' === $local ? null : $local . '@gmail.com';
-    }
-
-    /**
-     * @return array{string, string}|null local part e dominio normalizzato, se Gmail
+     * @param string $email indirizzo già passato da {@see checkSyntax()}: il
+     *                      dominio è normalizzato e privo di punti finali
+     *
+     * @return array{string, string}|null local part e dominio, se Gmail
      */
     private function splitGmail(string $email): ?array
     {
-        $at = strrpos($email, '@');
-        if (false === $at) {
-            return null;
-        }
-
-        $domain = rtrim($this->normalizeDomainPart(substr($email, $at + 1)), '.');
+        [$local, $domain] = $this->split($email);
 
         if ('gmail.com' !== $domain && 'googlemail.com' !== $domain) {
             return null;
         }
 
-        return [substr($email, 0, $at), $domain];
+        return [$local, $domain];
     }
 
     private function canonicalGmailLocal(string $local): string

@@ -172,7 +172,10 @@ Per riconoscere i duplicati è ancora più utile salvare la forma canonica accan
 ```php
 $validator->canonicalGmailAddress('Mario.Rossi+shop@GoogleMail.com'); // "mariorossi@gmail.com"
 $validator->canonicalGmailAddress('mario@example.com');               // null (non è Gmail)
+$validator->canonicalGmailAddress('mario..rossi@gmail.com');          // null (indirizzo non valido)
 ```
+
+Entrambi i metodi applicano gli stessi controlli di sanitize, sintassi e formato di `validate()` (esclusa la verifica MX): un indirizzo non valido non è mai un alias e non ha forma canonica, quindi forme come `mario..rossi@gmail.com` o `x@gmail.com.` non possono collidere con la casella reale `mariorossi@gmail.com`.
 
 Oppure chiedere esplicitamente a `validate()` di rifiutare gli alias, passando `rejectGmailAlias: true` al costruttore. **Il comportamento di default resta invariato** (gli alias sono accettati): è un'opzione che il client deve richiedere esplicitamente, non un vincolo imposto dalla libreria.
 
@@ -198,7 +201,7 @@ Un indirizzo che supera `validate()` è **conforme alle RFC**, non automaticamen
 
 - **`getEmail()` sugli esiti falliti** restituisce ciò che l'utente ha inviato, inclusi `<`, `>`, `"` e CR/LF. Applica sempre l'escaping del contesto di destinazione (`htmlspecialchars()` in HTML, rimozione di CR/LF prima di scrivere nei log). Per un indirizzo pronto all'uso usa `getSanitizedEmail()`, che è `null` se la validazione è fallita.
 
-- **Host MX e SSRF.** Gli host restituiti da `getMxHosts()` sono scelti da chi controlla il dominio e possono puntare a `127.0.0.1`, alla rete interna o a endpoint di metadati cloud. Se ti connetti a quegli host (es. verifica SMTP), abilita il filtro, che scarta gli host che non risolvono esclusivamente verso indirizzi pubblici:
+- **Host MX e SSRF.** Gli host restituiti da `getMxHosts()` sono scelti da chi controlla il dominio. I target che non sono un nome di dominio (address literal come `127.0.0.1`, forme numeriche come `127.1` o `0177.0.0.1`, nomi a una sola label come `localhost`) vengono sempre scartati, come richiede RFC 5321 §5.1; un nome regolare può però risolvere comunque verso `127.0.0.1`, la rete interna o un endpoint di metadati cloud. Se ti connetti a quegli host (es. verifica SMTP), abilita il filtro, che scarta gli host che non risolvono esclusivamente verso indirizzi pubblici:
 
   ```php
   $validator = new EmailValidator(new DnsMxResolver(rejectNonPublicHosts: true));

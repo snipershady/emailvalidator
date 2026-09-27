@@ -128,6 +128,45 @@ final class DnsMxResolverTest extends TestCase
         $this->assertSame(['mx.example.com'], $dnsMxResolver->resolve('example.com'));
     }
 
+    #[DataProvider('addressLikeTargetProvider')]
+    public function testSkipsTargetsThatAreAddressLiteralsOrSingleLabel(string $target): void
+    {
+        DnsStub::fake(['example.com.' => [DNS_MX => [
+            ['target' => $target, 'pri' => 0],
+            ['target' => 'mx.example.com', 'pri' => 10],
+        ]]]);
+
+        $dnsMxResolver = new DnsMxResolver();
+
+        $this->assertSame(['mx.example.com'], $dnsMxResolver->resolve('example.com'));
+    }
+
+    /** @return iterable<string, array{string}> */
+    public static function addressLikeTargetProvider(): iterable
+    {
+        yield 'ipv4 loopback' => ['127.0.0.1'];
+        yield 'ipv4 loopback with trailing dot' => ['127.0.0.1.'];
+        yield 'ipv4 private' => ['10.0.0.1'];
+        yield 'cloud metadata' => ['169.254.169.254'];
+        yield 'localhost' => ['localhost'];
+        yield 'localhost with trailing dot' => ['localhost.'];
+        yield 'short ipv4 form' => ['127.1'];
+        yield 'octal ipv4 form' => ['0177.0.0.1'];
+        yield 'hex ipv4 form' => ['0x7f.0.0.1'];
+        yield 'integer ipv4 form' => ['2130706433'];
+        yield 'numeric tld' => ['mx.example.123'];
+        yield 'ipv6 literal' => ['[::1]'];
+    }
+
+    public function testAcceptsPunycodeTld(): void
+    {
+        DnsStub::fake(['example.com.' => [DNS_MX => [['target' => 'mx.example.xn--p1ai', 'pri' => 0]]]]);
+
+        $dnsMxResolver = new DnsMxResolver();
+
+        $this->assertSame(['mx.example.xn--p1ai'], $dnsMxResolver->resolve('example.com'));
+    }
+
     public function testMalformedRecordIsNotMistakenForNullMx(): void
     {
         DnsStub::fake(['example.com.' => [DNS_MX => [['pri' => 0], 'garbage']]]);
