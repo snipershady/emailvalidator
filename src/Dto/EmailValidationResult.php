@@ -37,8 +37,14 @@ final readonly class EmailValidationResult
     }
 
     /**
-     * Indirizzo raggiunto dalla pipeline, valido o meno: utile per il logging
-     * o per ripresentare all'utente il valore effettivamente analizzato.
+     * Indirizzo raggiunto dalla pipeline, valido o meno.
+     *
+     * ATTENZIONE: se isValid() è false il valore è input utente NON fidato,
+     * anche con caratteri come < > " o CR/LF: va sempre sottoposto a escaping
+     * per il contesto di destinazione (htmlspecialchars() in HTML, rimozione
+     * di CR/LF nei log, ...). È vuoto quando l'input non era una stringa,
+     * superava la dimensione massima o non era UTF-8 valido.
+     * Per un indirizzo pronto all'uso usare {@see getSanitizedEmail()}.
      */
     public function getEmail(): string
     {

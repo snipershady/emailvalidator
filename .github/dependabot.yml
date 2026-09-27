@@ -1,0 +1,14 @@
+# Le action sono pinnate a SHA di commit (vedi workflows/ci.yml): Dependabot
+# propone gli aggiornamenti mantenendo il pin e il commento con la versione.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: composer
+    directory: /
+    schedule:
+      interval: weekly
+    versioning-strategy: widen

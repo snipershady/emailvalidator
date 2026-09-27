@@ -4,6 +4,9 @@
     "type": "library",
     "require": {
         "php": ">=8.3",
+        "ext-filter": "*",
+        "ext-intl": "*",
+        "ext-mbstring": "*",
         "snipershady/typeidentifier": "^2.0"
     },
     "license": "GPL-2.0-only",

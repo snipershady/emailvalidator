@@ -13,11 +13,17 @@ use TypeIdentifier\Service\EffectivePrimitiveTypeIdentifierServiceInterface;
  * Validazione email per PHP >= 8.3.
  *
  * Pipeline:
- *   1. Sanitize      → coercizione a stringa, trim, normalizzazione dominio (lowercase + IDN/punycode), FILTER_SANITIZE_EMAIL
+ *   1. Sanitize      → limite sulla dimensione grezza, coercizione a stringa, trim, normalizzazione dominio (lowercase + IDN/punycode), FILTER_SANITIZE_EMAIL
  *   2. Sintassi      → FILTER_VALIDATE_EMAIL + limiti di lunghezza RFC 5321
- *   3. Formato       → regex stretta su local part (dot-atom) e dominio (label + TLD)
- *   4. Alias Gmail   → opzionale, disattivato di default, vedi {@see isGmailAlias()}
- *   5. Record MX     → risoluzione via {@see MxResolver}, con rilevamento Null MX (RFC 7505)
+ *   3. Formato       → regex stretta su local part (dot-atom) e dominio (label + TLD, A-label IDNA valide)
+ *   4. Local part sicura → opzionale, disattivata di default, vedi $safeLocalPart
+ *   5. Alias Gmail   → opzionale, disattivato di default, vedi {@see isGmailAlias()}
+ *   6. Record MX     → risoluzione via {@see MxResolver}, con rilevamento Null MX (RFC 7505)
+ *
+ * Un indirizzo valido è conforme alle RFC, NON è sicuro in ogni contesto:
+ * senza $safeLocalPart il local part può iniziare con '-' o contenere
+ * caratteri come ' ` | & $ { }, pericolosi se passati a una shell o al
+ * quinto parametro di mail() (vedi CVE-2016-10033).
  */
 final readonly class EmailValidator
 {
@@ -28,6 +34,11 @@ final readonly class EmailValidator
 
     private const int MAX_LABEL_LENGTH = 63;
 
+    // Oltre questa dimensione (in byte, spazi inclusi) l'input grezzo viene
+    // rifiutato prima di qualunque elaborazione: nessun indirizzo reale ci si
+    // avvicina e si evita di processare payload arbitrariamente grandi.
+    private const int MAX_INPUT_LENGTH = 1024;
+
     // Local part "dot-atom" (RFC 5322) senza quoted-string: niente punti iniziali/finali/consecutivi
     private const string LOCAL_REGEX =
         "/^[A-Za-z0-9!#$%&'*+\/=?^_`{|}~-]+(?:\.[A-Za-z0-9!#$%&'*+\/=?^_`{|}~-]+)*$/D";
@@ -37,6 +48,13 @@ final readonly class EmailValidator
 
     // TLD: solo lettere oppure IDN in punycode
     private const string TLD_REGEX = '/^(?:[a-z]{2,63}|xn--[a-z0-9-]{1,59})$/D';
+
+    // Local part "sicura": solo alfanumerici, '.', '_', '+', '-' e mai '-' iniziale
+    private const string SAFE_LOCAL_REGEX = '/^(?!-)[A-Za-z0-9._+-]+$/D';
+
+    private const int IDNA_TO_ASCII_OPTIONS = IDNA_NONTRANSITIONAL_TO_ASCII | IDNA_CHECK_BIDI | IDNA_CHECK_CONTEXTJ;
+
+    private const int IDNA_TO_UNICODE_OPTIONS = IDNA_NONTRANSITIONAL_TO_UNICODE | IDNA_CHECK_BIDI | IDNA_CHECK_CONTEXTJ;
 
     private MxResolver $mxResolver;
 
@@ -52,6 +70,14 @@ final readonly class EmailValidator
          * imposto dalla libreria.
          */
         private bool $rejectGmailAlias = false,
+        /**
+         * Se true, validate() rifiuta (EmailError::UNSAFE_LOCAL_PART) un local
+         * part con caratteri diversi da [A-Za-z0-9._+-] o che inizia con '-'.
+         * Esclude indirizzi RFC-validi ma rari (es. "o'brien@..."), in cambio
+         * di un indirizzo innocuo anche per shell, header e argomenti di
+         * comando. Disattivato di default.
+         */
+        private bool $safeLocalPart = false,
     ) {
         $this->mxResolver = $mxResolver ?? new DnsMxResolver();
         $this->effectivePrimitiveTypeIdentifierService = $effectivePrimitiveTypeIdentifierService ?? new EffectivePrimitiveTypeIdentifierService();
@@ -66,6 +92,20 @@ final readonly class EmailValidator
         // tipizzata. Non si usa sanitizeHtml: FILTER_FLAG_STRIP_HIGH
         // rimuoverebbe i domini Unicode (IDN) e '+' è un carattere legittimo
         // del local part (subaddressing "user+tag@dominio").
+        //
+        // Array e oggetti non possono essere un indirizzo: vengono rifiutati
+        // senza attraversarli (un array molto annidato farebbe lanciare
+        // un'eccezione alla libreria di coercizione, uno enorme costerebbe CPU).
+        if (null !== $input && !is_scalar($input)) {
+            return EmailValidationResult::fail('', EmailError::EMPTY_ADDRESS);
+        }
+
+        // Limite sulla dimensione grezza prima di trim, mb_*, IDN e filter:
+        // l'input scartato non viene conservato nel risultato.
+        if (is_string($input) && strlen($input) > self::MAX_INPUT_LENGTH) {
+            return EmailValidationResult::fail('', EmailError::TOO_LONG);
+        }
+
         $raw = $this->effectivePrimitiveTypeIdentifierService->getStringValue($input, trim: true);
 
         if ('' === $raw) {
@@ -73,7 +113,9 @@ final readonly class EmailValidator
         }
 
         if (!mb_check_encoding($raw, 'UTF-8')) {
-            return EmailValidationResult::fail($raw, EmailError::INVALID_ENCODING);
+            // I byte non UTF-8 non vengono restituiti: non sono rappresentabili
+            // in modo sicuro né in HTML né nei log.
+            return EmailValidationResult::fail('', EmailError::INVALID_ENCODING);
         }
 
         // normalizeDomain() non può mai restituire una stringa vuota partendo
@@ -107,12 +149,17 @@ final readonly class EmailValidator
             return EmailValidationResult::fail($email, EmailError::INVALID_FORMAT);
         }
 
-        // ── 4. ALIAS GMAIL (opzionale) ──────────────────────────────────
+        // ── 4. LOCAL PART SICURA (opzionale) ────────────────────────────
+        if ($this->safeLocalPart && 1 !== preg_match(self::SAFE_LOCAL_REGEX, $local)) {
+            return EmailValidationResult::fail($email, EmailError::UNSAFE_LOCAL_PART);
+        }
+
+        // ── 5. ALIAS GMAIL (opzionale) ──────────────────────────────────
         if ($this->rejectGmailAlias && $this->isGmailAlias($email)) {
             return EmailValidationResult::fail($email, EmailError::GMAIL_ALIAS);
         }
 
-        // ── 5. RECORD MX ───────────────────────────────────────────────
+        // ── 6. RECORD MX ───────────────────────────────────────────────
         $mx = $this->mxResolver->resolve($domain);
 
         return $mx instanceof EmailError
@@ -128,31 +175,72 @@ final readonly class EmailValidator
      *
      *  - punti nel local part ("mario.rossi@gmail.com" == "mariorossi@gmail.com");
      *  - subaddressing con '+' ("mariorossi+shop@gmail.com");
+     *  - maiuscole nel local part ("MarioRossi@gmail.com"): Gmail le ignora;
      *  - il dominio alternativo "googlemail.com", sinonimo di "gmail.com".
      *
-     * Non richiede che $email sia già stato validato da {@see validate()}:
-     * un indirizzo sintatticamente non valido o non basato su Gmail
-     * restituisce semplicemente false.
+     * Il dominio viene normalizzato come in validate() (minuscole, IDN, punto
+     * finale), quindi anche forme come "GMAIL.COM." o "ｇｍａｉｌ.com" sono
+     * riconosciute. Non richiede che $email sia già stato validato: un
+     * indirizzo non basato su Gmail restituisce semplicemente false.
      */
     public function isGmailAlias(string $email): bool
     {
+        $parts = $this->splitGmail($email);
+        if (null === $parts) {
+            return false;
+        }
+
+        [$local, $domain] = $parts;
+
+        return 'googlemail.com' === $domain || $local !== $this->canonicalGmailLocal($local);
+    }
+
+    /**
+     * Forma canonica di un indirizzo Gmail ("mariorossi@gmail.com"), utile per
+     * riconoscere registrazioni duplicate fatte tramite alias: senza punti,
+     * senza tag '+', in minuscolo, sul dominio "gmail.com".
+     * Restituisce null se $email non è un indirizzo Gmail o se il local part
+     * canonico risulterebbe vuoto (es. "+tag@gmail.com").
+     */
+    public function canonicalGmailAddress(string $email): ?string
+    {
+        $parts = $this->splitGmail($email);
+        if (null === $parts) {
+            return null;
+        }
+
+        $local = $this->canonicalGmailLocal($parts[0]);
+
+        return '' === $local ? null : $local . '@gmail.com';
+    }
+
+    /**
+     * @return array{string, string}|null local part e dominio normalizzato, se Gmail
+     */
+    private function splitGmail(string $email): ?array
+    {
         $at = strrpos($email, '@');
         if (false === $at) {
-            return false;
+            return null;
         }
 
-        $local = substr($email, 0, $at);
-        $domain = mb_strtolower(substr($email, $at + 1), 'UTF-8');
+        $domain = rtrim($this->normalizeDomainPart(substr($email, $at + 1)), '.');
 
-        if ('googlemail.com' === $domain) {
-            return true;
+        if ('gmail.com' !== $domain && 'googlemail.com' !== $domain) {
+            return null;
         }
 
-        if ('gmail.com' !== $domain) {
-            return false;
+        return [substr($email, 0, $at), $domain];
+    }
+
+    private function canonicalGmailLocal(string $local): string
+    {
+        $plus = strpos($local, '+');
+        if (false !== $plus) {
+            $local = substr($local, 0, $plus);
         }
 
-        return str_contains($local, '.') || str_contains($local, '+');
+        return strtolower(str_replace('.', '', $local));
     }
 
     /**
@@ -167,20 +255,20 @@ final readonly class EmailValidator
             return $email;
         }
 
-        $local = substr($email, 0, $at);
-        $domain = mb_strtolower(substr($email, $at + 1), 'UTF-8');
+        return substr($email, 0, $at) . '@' . $this->normalizeDomainPart(substr($email, $at + 1));
+    }
 
-        if (1 === preg_match('/[^\x00-\x7F]/', $domain) && function_exists('idn_to_ascii')) {
-            $ascii = idn_to_ascii(
-                $domain,
-                IDNA_NONTRANSITIONAL_TO_ASCII | IDNA_CHECK_BIDI | IDNA_CHECK_CONTEXTJ,
-                INTL_IDNA_VARIANT_UTS46,
-            );
+    private function normalizeDomainPart(string $domain): string
+    {
+        $domain = mb_strtolower($domain, 'UTF-8');
+
+        if (1 === preg_match('/[^\x00-\x7F]/', $domain)) {
+            $ascii = idn_to_ascii($domain, self::IDNA_TO_ASCII_OPTIONS, INTL_IDNA_VARIANT_UTS46);
             // Se la conversione fallisce si lascia l'originale: verrà scartato dal sanitize
             $domain = false !== $ascii ? $ascii : $domain;
         }
 
-        return $local . '@' . $domain;
+        return $domain;
     }
 
     /**
@@ -244,7 +332,7 @@ final readonly class EmailValidator
                 // @codeCoverageIgnoreEnd
             }
 
-            if (1 !== preg_match(self::LABEL_REGEX, $label)) {
+            if (1 !== preg_match(self::LABEL_REGEX, $label) || !$this->isValidHyphenation($label)) {
                 return false;
             }
         }
@@ -262,5 +350,29 @@ final readonly class EmailValidator
         }
 
         return 1 === preg_match(self::TLD_REGEX, $tld);
+    }
+
+    /**
+     * Le label con '--' in terza e quarta posizione sono riservate (RFC 5891
+     * §4.2.3.1): è ammesso solo il prefisso IDNA "xn--", e in quel caso la
+     * label deve essere una A-label valida, cioè decodificabile e identica a
+     * se stessa dopo il round trip punycode → Unicode → punycode.
+     */
+    private function isValidHyphenation(string $label): bool
+    {
+        if ('--' !== substr($label, 2, 2)) {
+            return true;
+        }
+
+        if (!str_starts_with($label, 'xn--')) {
+            return false;
+        }
+
+        $unicode = idn_to_utf8($label, self::IDNA_TO_UNICODE_OPTIONS, INTL_IDNA_VARIANT_UTS46);
+        if (false === $unicode || $unicode === $label) {
+            return false;
+        }
+
+        return idn_to_ascii($unicode, self::IDNA_TO_ASCII_OPTIONS, INTL_IDNA_VARIANT_UTS46) === $label;
     }
 }

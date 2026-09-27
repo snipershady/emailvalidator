@@ -4,6 +4,7 @@
 
 /tests               export-ignore
 /.github             export-ignore
+/.claude             export-ignore
 /build               export-ignore
 /.php-cs-fixer.dist.php export-ignore
 /.php-cs-fixer.cache export-ignore

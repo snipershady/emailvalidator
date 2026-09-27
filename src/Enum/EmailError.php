@@ -19,4 +19,6 @@ enum EmailError: string
     case NO_MX_RECORD = 'No MX record for domain';
     case DNS_FAILURE = 'DNS resolution error';
     case GMAIL_ALIAS = 'Address is a Gmail alias';
+    case UNSAFE_LOCAL_PART = 'Local part contains characters outside the safe set';
+    case NON_PUBLIC_MX_HOST = 'No MX host resolves only to public addresses';
 }

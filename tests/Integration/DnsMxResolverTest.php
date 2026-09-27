@@ -40,4 +40,20 @@ final class DnsMxResolverTest extends TestCase
 
         $this->assertSame(EmailError::NO_MX_RECORD, $dnsMxResolver->resolve('dominio-inesistente-xyz123.it'));
     }
+
+    public function testReturnsDnsFailureOnServfail(): void
+    {
+        // dnssec-failed.org ha firme DNSSEC volutamente rotte: un resolver
+        // validante risponde SERVFAIL. Con un resolver non validante il
+        // dominio risolve normalmente, quindi il test viene saltato.
+        $dnsMxResolver = new DnsMxResolver();
+
+        $result = $dnsMxResolver->resolve('dnssec-failed.org');
+
+        if (is_array($result)) {
+            $this->markTestSkipped('Il resolver di sistema non valida DNSSEC');
+        }
+
+        $this->assertSame(EmailError::DNS_FAILURE, $result);
+    }
 }
