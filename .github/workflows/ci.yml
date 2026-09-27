@@ -20,7 +20,10 @@ env:
 
 jobs:
   lint:
-    name: Static analysis (PHP ${{ env.LINT_PHP_VERSION }})
+    # Il campo "name" del job non supporta il contesto env (solo github,
+    # matrix, strategy, needs, vars, inputs): la versione PHP resta hardcoded
+    # qui, ma è pilotata da env.LINT_PHP_VERSION negli step sottostanti.
+    name: Static analysis (PHP 8.3)
     runs-on: ubuntu-latest
 
     steps:
