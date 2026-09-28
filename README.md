@@ -4,55 +4,55 @@
 
 Simple, easy, clean, and useful email validator. Nothing you can't build yourself, but it's ready to use and always up to date.
 
-Valida un indirizzo email attraverso una pipeline a più livelli — sintassi, formato RFC 5322/5321 e verifica dei record MX (con rilevamento del Null MX, RFC 7505) — e restituisce l'indirizzo sanitizzato quando la validazione ha esito positivo.
+Validates an email address through a multi-stage pipeline — syntax, RFC 5322/5321 format, and MX record verification (with Null MX detection, RFC 7505) — and returns the sanitized address when validation succeeds.
 
-## Perché usare questa libreria invece di `filter_var($x, FILTER_VALIDATE_EMAIL)`
+## Why use this library instead of `filter_var($x, FILTER_VALIDATE_EMAIL)`
 
-`FILTER_VALIDATE_EMAIL` da solo risponde solo alla domanda "la stringa è scritta come un'email?". Non sa dirti se quel dominio esiste, se accetta davvero posta, se contiene un dominio Unicode normalizzato correttamente, né se l'input arriva "sporco" da un form e andrebbe rifiutato invece di corretto a caso. Questa libreria aggiunge tutti questi controlli in un'unica chiamata, e — punto centrale del suo design — **non prova mai a indovinare cosa intendesse l'utente**: se per renderlo sintatticamente valido dovrebbe rimuovere un carattere, rifiuta l'indirizzo invece di restituire una versione "corretta" che l'utente non ha scritto.
+`FILTER_VALIDATE_EMAIL` alone only answers the question "is this string written like an email?". It can't tell you whether that domain exists, whether it actually accepts mail, whether it contains a correctly normalized Unicode domain, or whether the input arrived "dirty" from a form and should be rejected instead of silently fixed up. This library adds all of these checks in a single call, and — the central point of its design — **it never tries to guess what the user meant**: if making it syntactically valid would require removing a character, it rejects the address instead of returning a "corrected" version the user never wrote.
 
-| INPUT | `isValid()` | `getSanitizedEmail()` / `getError()->name` | Perché |
+| INPUT | `isValid()` | `getSanitizedEmail()` / `getError()->name` | Why |
 | --- | --- | --- | --- |
-| `"  Mario.Rossi@Gmail.com  "` | `true` | `Mario.Rossi@gmail.com` | spazi rimossi, dominio normalizzato in minuscolo |
-| `"utente@müller.de"` | `true` | `utente@xn--mller-kva.de` | dominio Unicode (IDN) convertito in punycode |
-| `"user+tag@gmail.com"` | `true` | `user+tag@gmail.com` | il subaddressing (`+tag`) è preservato, non è un errore |
-| `"sniper shady@gmail.com"` | `false` | `SANITIZE_ALTERED` | lo spazio nel local part non è ammesso: **rifiutato**, non corretto in `snipershady@gmail.com` a insaputa dell'utente |
-| `""` / `"   "` | `false` | `EMPTY_ADDRESS` | vuoto anche dopo il trim |
-| `"aaaa…(250 caratteri)…@example.com"` | `false` | `TOO_LONG` | oltre i 254 caratteri di RFC 5321 |
-| `"not-an-email"` | `false` | `INVALID_SYNTAX` | manca la struttura `local@dominio` |
-| `"user@example.c"` | `false` | `INVALID_FORMAT` | TLD di un solo carattere: `filter_var()` da solo lo accetterebbe |
-| `"user@ex--ample.com"` / `"user@xn--zz.com"` | `false` | `INVALID_FORMAT` | label con `--` in posizione 3-4 riservata (RFC 5891) o punycode non decodificabile |
-| `"user@[192.168.1.1]"` | `false` | `INVALID_FORMAT` | indirizzo IP letterale: sintatticamente valido per RFC, ma quasi sempre sintomo di un input malformato o di un tentativo di bypass |
-| `"user@example.com"` | `false` | `NULL_MX` | il dominio esiste ma dichiara esplicitamente (RFC 7505) di non accettare email — `filter_var()` non ha modo di saperlo |
-| `"user@dominio-inesistente-xyz123.it"` | `false` | `NO_MX_RECORD` | il dominio non ha alcun server di posta configurato — `filter_var()` non ha modo di saperlo |
+| `"  Mario.Rossi@Gmail.com  "` | `true` | `Mario.Rossi@gmail.com` | spaces removed, domain normalized to lowercase |
+| `"utente@müller.de"` | `true` | `utente@xn--mller-kva.de` | Unicode (IDN) domain converted to punycode |
+| `"user+tag@gmail.com"` | `true` | `user+tag@gmail.com` | subaddressing (`+tag`) is preserved, not an error |
+| `"sniper shady@gmail.com"` | `false` | `SANITIZE_ALTERED` | the space in the local part is not allowed: **rejected**, not silently corrected to `snipershady@gmail.com` |
+| `""` / `"   "` | `false` | `EMPTY_ADDRESS` | empty even after trimming |
+| `"aaaa…(250 characters)…@example.com"` | `false` | `TOO_LONG` | over the 254-character limit of RFC 5321 |
+| `"not-an-email"` | `false` | `INVALID_SYNTAX` | missing the `local@domain` structure |
+| `"user@example.c"` | `false` | `INVALID_FORMAT` | single-character TLD: `filter_var()` alone would accept it |
+| `"user@ex--ample.com"` / `"user@xn--zz.com"` | `false` | `INVALID_FORMAT` | label with `--` in the reserved position 3-4 (RFC 5891) or undecodable punycode |
+| `"user@[192.168.1.1]"` | `false` | `INVALID_FORMAT` | literal IP address: syntactically valid per RFC, but almost always a symptom of malformed input or a bypass attempt |
+| `"user@example.com"` | `false` | `NULL_MX` | the domain exists but explicitly declares (RFC 7505) that it does not accept email — `filter_var()` has no way of knowing this |
+| `"user@dominio-inesistente-xyz123.it"` | `false` | `NO_MX_RECORD` | the domain has no mail server configured — `filter_var()` has no way of knowing this |
 
-Le righe con esito `true` e le ultime due dipendono dallo stato DNS reale al momento della chiamata (qui verificato con risoluzione live); il resto della tabella è deterministico, perché l'indirizzo viene rifiutato prima di qualunque query DNS. In breve: se ti basta sapere che una stringa "assomiglia" a un'email, `filter_var()` basta; se devi sapere che quell'indirizzo può ricevere posta *adesso*, e vuoi che un input ambiguo venga segnalato invece che silenziosamente riscritto, è per questo che esiste questa libreria.
+The rows with a `true` outcome and the last two depend on the actual DNS state at call time (here verified with live resolution); the rest of the table is deterministic, because the address is rejected before any DNS query. In short: if you just need to know that a string "looks like" an email, `filter_var()` is enough; if you need to know that the address can receive mail *right now*, and want ambiguous input to be flagged rather than silently rewritten, that's what this library is for.
 
-Le modifiche di ogni versione, inclusi i cambi di comportamento e le correzioni di sicurezza, sono elencate nel [CHANGELOG](CHANGELOG.md).
+Changes for each version, including behavior changes and security fixes, are listed in the [CHANGELOG](CHANGELOG.md).
 
-## Requisiti
+## Requirements
 
 - PHP >= 8.3
-- estensioni: `intl`, `mbstring`, `filter` (dichiarate in `composer.json`)
+- extensions: `intl`, `mbstring`, `filter` (declared in `composer.json`)
 
-## Installazione
+## Installation
 
 ```bash
 composer require snipershady/emailvalidator
 ```
 
-## Struttura del pacchetto
+## Package structure
 
 ```
-EmailValidator\Service\EmailValidator    servizio principale, esegue la pipeline di validazione
-EmailValidator\Service\MxResolver        interfaccia per la risoluzione dei record MX
-EmailValidator\Service\DnsMxResolver     implementazione DNS reale di MxResolver
-EmailValidator\Dto\EmailValidationResult oggetto immutabile con l'esito della validazione
-EmailValidator\Enum\EmailError           enum dei possibili motivi di fallimento
+EmailValidator\Service\EmailValidator    main service, runs the validation pipeline
+EmailValidator\Service\MxResolver        interface for MX record resolution
+EmailValidator\Service\DnsMxResolver     real DNS implementation of MxResolver
+EmailValidator\Dto\EmailValidationResult immutable object holding the validation outcome
+EmailValidator\Enum\EmailError           enum of possible failure reasons
 ```
 
-## Documentazione per il client
+## Client documentation
 
-### Uso base
+### Basic usage
 
 ```php
 use EmailValidator\Service\EmailValidator;
@@ -64,38 +64,38 @@ $result = $validator->validate('  Mario.Rossi@Gmail.com ');
 if ($result->isValid()) {
     echo $result->getSanitizedEmail(); // Mario.Rossi@gmail.com
 } else {
-    echo $result->getError()->value;   // es. "Invalid format"
+    echo $result->getError()->value;   // e.g. "Invalid format"
 }
 ```
 
-`validate()` accetta `mixed` e restituisce **sempre** un `EmailValidationResult`, senza mai lanciare eccezioni — utile quando il valore arriva grezzo da form, querystring o JSON decodificato:
+`validate()` accepts `mixed` and **always** returns an `EmailValidationResult`, never throwing exceptions — useful when the value arrives raw from a form, query string, or decoded JSON:
 
-- gli scalari (`int`, `float`, `bool`) vengono coerciati a stringa;
-- `null`, array (anche annidati in profondità) e oggetti producono `EMPTY_ADDRESS` senza essere attraversati;
-- una stringa grezza oltre 1024 byte (spazi inclusi) produce `TOO_LONG` prima di qualunque elaborazione.
+- scalars (`int`, `float`, `bool`) are coerced to string;
+- `null`, arrays (even deeply nested) and objects produce `EMPTY_ADDRESS` without being traversed;
+- a raw string over 1024 bytes (including spaces) produces `TOO_LONG` before any processing.
 
-### Configurazione
+### Configuration
 
-`EmailValidator` non richiede alcuna dipendenza esterna: `new EmailValidator()` è già pronto all'uso, con risoluzione DNS reale e protezione SSRF attiva. Il costruttore accetta solo il resolver MX e due opzioni, tutte facoltative:
+`EmailValidator` requires no external dependency: `new EmailValidator()` is ready to use out of the box, with real DNS resolution and SSRF protection active. The constructor only accepts the MX resolver and two options, all optional:
 
 ```php
 public function __construct(
     ?MxResolver $mxResolver = null,   // default: new DnsMxResolver()
-    bool $rejectGmailAlias = false,   // rifiuta gli alias Gmail, vedi "Alias Gmail"
-    bool $safeLocalPart = false,      // local part limitato a [A-Za-z0-9._+-], vedi "Sicurezza"
+    bool $rejectGmailAlias = false,   // rejects Gmail aliases, see "Gmail aliases"
+    bool $safeLocalPart = false,      // local part restricted to [A-Za-z0-9._+-], see "Security"
 )
 ```
 
-Le opzioni di risoluzione DNS appartengono invece a `DnsMxResolver`:
+DNS resolution options belong instead to `DnsMxResolver`:
 
 ```php
 public function __construct(
-    bool $allowImplicitMx = false,     // senza MX accetta un record A/AAAA (RFC 5321 §5.1)
-    bool $rejectNonPublicHosts = true, // scarta gli host MX non pubblici, vedi "Protezione SSRF sugli host MX"
+    bool $allowImplicitMx = false,     // without MX, accepts an A/AAAA record (RFC 5321 §5.1)
+    bool $rejectNonPublicHosts = true, // discards MX hosts that are not public, see "SSRF protection on MX hosts"
 )
 ```
 
-Si consiglia di passare le opzioni come **argomenti nominati**: restano leggibili e non dipendono dall'ordine dei parametri.
+It's recommended to pass options as **named arguments**: they stay readable and don't depend on parameter order.
 
 ```php
 use EmailValidator\Service\DnsMxResolver;
@@ -108,21 +108,21 @@ $validator = new EmailValidator(
 );
 ```
 
-La coercizione a stringa dell'input usa internamente [`snipershady/typeidentifier`](https://packagist.org/packages/snipershady/typeidentifier), installata da Composer come dipendenza: è un dettaglio implementativo e non va né istanziata né passata dal client. L'unico collaboratore sostituibile è il resolver MX (vedi [Risoluzione MX](#risoluzione-mx-iniezione-e-test)).
+The string coercion of the input internally uses [`snipershady/typeidentifier`](https://packagist.org/packages/snipershady/typeidentifier), installed by Composer as a dependency: it's an implementation detail and should neither be instantiated nor passed by the client. The only replaceable collaborator is the MX resolver (see [MX resolution](#mx-resolution-injection-and-testing)).
 
-`EmailValidator` è immutabile (`final readonly`) e senza stato tra una chiamata e l'altra: istanzialo una sola volta, per esempio come servizio condiviso nel container di dipendenze, e riusalo per tutte le validazioni.
+`EmailValidator` is immutable (`final readonly`) and stateless between calls: instantiate it once, for example as a shared service in the dependency container, and reuse it for all validations.
 
-### `EmailValidationResult`: leggere l'esito
+### `EmailValidationResult`: reading the outcome
 
-| Metodo | Ritorna | Descrizione |
+| Method | Returns | Description |
 | --- | --- | --- |
-| `isValid(): bool` | `bool` | esito complessivo della validazione |
-| `getEmail(): string` | `string` | indirizzo raggiunto dalla pipeline, valido o meno — **se non valido è input utente non fidato**, vedi [Sicurezza](#sicurezza) |
-| `getSanitizedEmail(): ?string` | `string\|null` | indirizzo sanitizzato, solo se `isValid()` è `true`; altrimenti `null` |
-| `getMxHosts(): array` | `list<string>` | host MX del dominio, ordinati per priorità (vuoto se non valido); con il resolver di default contiene solo host che risolvono verso indirizzi pubblici, vedi [Protezione SSRF](#protezione-ssrf-sugli-host-mx-attiva-di-default) |
-| `getError(): ?EmailError` | `EmailError\|null` | motivo del fallimento; `null` se valido |
+| `isValid(): bool` | `bool` | overall validation outcome |
+| `getEmail(): string` | `string` | address reached by the pipeline, valid or not — **if not valid, it's untrusted user input**, see [Security](#security) |
+| `getSanitizedEmail(): ?string` | `string\|null` | sanitized address, only if `isValid()` is `true`; otherwise `null` |
+| `getMxHosts(): array` | `list<string>` | domain's MX hosts, ordered by priority (empty if not valid); with the default resolver it contains only hosts that resolve to public addresses, see [SSRF protection](#ssrf-protection-on-mx-hosts-active-by-default) |
+| `getError(): ?EmailError` | `EmailError\|null` | reason for failure; `null` if valid |
 
-### `EmailError`: i possibili motivi di fallimento
+### `EmailError`: the possible failure reasons
 
 ```php
 use EmailValidator\Enum\EmailError;
@@ -141,38 +141,38 @@ EmailError::UNSAFE_LOCAL_PART;  // Local part contains characters outside the sa
 EmailError::NON_PUBLIC_MX_HOST; // No MX host resolves only to public addresses
 ```
 
-`NON_PUBLIC_MX_HOST` indica che il dominio ha dei record MX, ma nessuno dei suoi host risolve esclusivamente verso indirizzi pubblici (vedi [Protezione SSRF](#protezione-ssrf-sugli-host-mx-attiva-di-default)).
+`NON_PUBLIC_MX_HOST` means the domain has MX records, but none of its hosts resolve exclusively to public addresses (see [SSRF protection](#ssrf-protection-on-mx-hosts-active-by-default)).
 
-`NO_MX_RECORD` e `NULL_MX` sono esiti definitivi del DNS; `DNS_FAILURE` indica invece un errore transitorio (SERVFAIL, timeout, resolver irraggiungibile): in quel caso l'indirizzo non va considerato inesistente, ma conviene riprovare più tardi o accettarlo con riserva.
+`NO_MX_RECORD` and `NULL_MX` are definitive DNS outcomes; `DNS_FAILURE` instead indicates a transient error (SERVFAIL, timeout, unreachable resolver): in that case the address should not be considered non-existent, but should be retried later or accepted with reservation.
 
-Ogni case è backed da una stringa in inglese pronta per essere mostrata (`$error->value`) oppure usata come chiave per una propria traduzione:
+Each case is backed by an English string ready to be displayed (`$error->value`) or used as a key for your own translation:
 
 ```php
 $messages = [
-    EmailError::EMPTY_ADDRESS->name    => "L'indirizzo non può essere vuoto",
-    EmailError::INVALID_FORMAT->name   => "Il formato dell'indirizzo non è valido",
+    EmailError::EMPTY_ADDRESS->name    => "The address cannot be empty",
+    EmailError::INVALID_FORMAT->name   => "The address format is not valid",
     // ...
 ];
 
-$error = $result->getError(); // null se l'indirizzo è valido
+$error = $result->getError(); // null if the address is valid
 
 if (null !== $error) {
     echo $messages[$error->name] ?? $error->value;
 }
 ```
 
-### Pipeline di validazione
+### Validation pipeline
 
-1. **Sanitize** — coercizione a stringa, trim, normalizzazione del dominio (lowercase + IDN/punycode via `ext-intl`), `FILTER_SANITIZE_EMAIL`.
-2. **Sintassi** — `FILTER_VALIDATE_EMAIL` + limiti di lunghezza RFC 5321.
-3. **Formato** — regex stretta sul local part (dot-atom, RFC 5322) e sul dominio (label DNS + TLD, A-label IDNA valide).
-4. **Local part sicura** — opzionale, disattivata di default (vedi [Sicurezza](#sicurezza)).
-5. **Alias Gmail** — opzionale, disattivato di default (vedi sotto).
-6. **Record MX** — risoluzione DNS con rilevamento del Null MX (RFC 7505), distinzione tra "record assente" ed "errore DNS" e, di default, scarto degli host MX che non risolvono verso indirizzi pubblici (vedi [Protezione SSRF](#protezione-ssrf-sugli-host-mx-attiva-di-default)).
+1. **Sanitize** — string coercion, trim, domain normalization (lowercase + IDN/punycode via `ext-intl`), `FILTER_SANITIZE_EMAIL`.
+2. **Syntax** — `FILTER_VALIDATE_EMAIL` + RFC 5321 length limits.
+3. **Format** — strict regex on the local part (dot-atom, RFC 5322) and on the domain (DNS labels + TLD, valid IDNA A-labels).
+4. **Safe local part** — optional, disabled by default (see [Security](#security)).
+5. **Gmail alias** — optional, disabled by default (see below).
+6. **MX records** — DNS resolution with Null MX detection (RFC 7505), distinguishing between "record absent" and "DNS error" and, by default, discarding MX hosts that don't resolve to public addresses (see [SSRF protection](#ssrf-protection-on-mx-hosts-active-by-default)).
 
-### Risoluzione MX: iniezione e test
+### MX resolution: injection and testing
 
-La risoluzione DNS è isolata dietro l'interfaccia `EmailValidator\Service\MxResolver`, cosicché nei test si possa sostituirla senza toccare la rete:
+DNS resolution is isolated behind the `EmailValidator\Service\MxResolver` interface, so it can be replaced in tests without touching the network:
 
 ```php
 use EmailValidator\Enum\EmailError;
@@ -189,7 +189,7 @@ $fakeResolver = new class implements MxResolver {
 $validator = new EmailValidator($fakeResolver);
 ```
 
-Per accettare anche domini privi di MX ma con un record A/AAAA (implicit MX, RFC 5321 §5.1), usa l'implementazione DNS reale con l'opzione dedicata:
+To also accept domains without an MX but with an A/AAAA record (implicit MX, RFC 5321 §5.1), use the real DNS implementation with the dedicated option:
 
 ```php
 use EmailValidator\Service\DnsMxResolver;
@@ -198,48 +198,48 @@ use EmailValidator\Service\EmailValidator;
 $validator = new EmailValidator(new DnsMxResolver(allowImplicitMx: true));
 ```
 
-Timeout e numero di tentativi delle query DNS dipendono dal resolver di sistema (`options timeout:N attempts:N` in `/etc/resolv.conf`): le funzioni DNS native di PHP non permettono di impostarli. Se la validazione è esposta a input pubblico, applica un rate limit a monte ed eventualmente implementa `MxResolver` con una libreria DNS che supporti timeout e cache.
+Timeout and retry count for DNS queries depend on the system resolver (`options timeout:N attempts:N` in `/etc/resolv.conf`): PHP's native DNS functions don't allow setting them. If validation is exposed to public input, apply a rate limit upstream and, if needed, implement `MxResolver` with a DNS library that supports timeouts and caching.
 
-### Protezione SSRF sugli host MX (attiva di default)
+### SSRF protection on MX hosts (active by default)
 
-I record MX sono scelti da chi controlla il dominio, cioè, per un indirizzo inserito in un form, da chiunque. Chi registra `attaccante.com` può farne puntare l'MX a `127.0.0.1`, a un host della tua rete interna o all'endpoint dei metadati cloud (`169.254.169.254`). Se la tua applicazione si connette poi agli host di `getMxHosts()`, per esempio per una verifica SMTP (`RCPT TO`), senza filtro diventerebbe un proxy verso la tua rete interna (SSRF).
+MX records are chosen by whoever controls the domain, meaning, for an address entered in a form, by anyone. Whoever registers `attacker.com` can point its MX at `127.0.0.1`, a host on your internal network, or the cloud metadata endpoint (`169.254.169.254`). If your application then connects to the hosts from `getMxHosts()`, for example for an SMTP check (`RCPT TO`), without filtering it would become a proxy into your internal network (SSRF).
 
-Per questo `DnsMxResolver`, e quindi `new EmailValidator()` che lo usa di default, applica due livelli di difesa.
+For this reason, `DnsMxResolver`, and therefore `new EmailValidator()` which uses it by default, applies two layers of defense.
 
-**1. Target che non sono nomi di dominio — sempre scartati, non disattivabili.** RFC 5321 §5.1 richiede che il target di un MX sia un nome di dominio, mai un indirizzo. Vengono ignorati:
+**1. Targets that are not domain names — always discarded, cannot be disabled.** RFC 5321 §5.1 requires the target of an MX to be a domain name, never an address. The following are ignored:
 
-| Target MX | Perché è scartato |
+| MX target | Why it's discarded |
 | --- | --- |
-| `127.0.0.1`, `10.0.0.1`, `169.254.169.254` | address literal IPv4 |
-| `127.1`, `0177.0.0.1`, `0x7f.0.0.1`, `2130706433` | forme numeriche non canoniche: `FILTER_VALIDATE_IP` non le riconosce, ma `getaddrinfo()` / `inet_aton()` le risolvono comunque in `127.0.0.1` |
-| `localhost`, `mailserver` | nome a una sola label, risolto da `/etc/hosts` o dai search domain locali |
-| `mx.example.123` | TLD non alfabetico |
+| `127.0.0.1`, `10.0.0.1`, `169.254.169.254` | IPv4 address literal |
+| `127.1`, `0177.0.0.1`, `0x7f.0.0.1`, `2130706433` | non-canonical numeric forms: `FILTER_VALIDATE_IP` doesn't recognize them, but `getaddrinfo()` / `inet_aton()` still resolve them to `127.0.0.1` |
+| `localhost`, `mailserver` | single-label name, resolved via `/etc/hosts` or local search domains |
+| `mx.example.123` | non-alphabetic TLD |
 
-Il target deve avere almeno due label e un TLD alfabetico (o IDN in punycode, `xn--…`).
+The target must have at least two labels and an alphabetic TLD (or IDN in punycode, `xn--…`).
 
-**2. Host che risolvono verso indirizzi non pubblici — scartati di default.** Per ogni host MX rimasto vengono risolti i record A e AAAA, e l'host viene tenuto solo se **tutti** i suoi indirizzi sono pubblici (`FILTER_FLAG_GLOBAL_RANGE`). Vengono quindi scartati gli host che risolvono, anche solo in parte, verso:
+**2. Hosts that resolve to non-public addresses — discarded by default.** For each remaining MX host, A and AAAA records are resolved, and the host is kept only if **all** of its addresses are public (`FILTER_FLAG_GLOBAL_RANGE`). The following hosts are therefore discarded if they resolve, even partially, to:
 
 - loopback (`127.0.0.0/8`, `::1`);
-- reti private (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `fc00::/7`);
-- link-local, incluso l'endpoint dei metadati cloud (`169.254.0.0/16`, `fe80::/10`);
-- gli altri range riservati o non instradabili.
+- private networks (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `fc00::/7`);
+- link-local, including the cloud metadata endpoint (`169.254.0.0/16`, `fe80::/10`);
+- other reserved or non-routable ranges.
 
-Un host senza alcun record A/AAAA viene scartato, perché non è raggiungibile. Lo stesso filtro vale per l'host implicito quando `allowImplicitMx` è attivo.
+A host with no A/AAAA record is discarded, because it's unreachable. The same filter applies to the implicit host when `allowImplicitMx` is enabled.
 
-Cosa vedi come client:
+What you see as a client:
 
 ```php
 $result = (new EmailValidator())->validate('utente@dominio.com');
 
-$result->getMxHosts();  // solo gli host sicuri, nell'ordine di priorità originale
-$result->getError();    // se nessun host è sicuro:
-                        //   EmailError::NON_PUBLIC_MX_HOST — tutti scartati
-                        //   EmailError::DNS_FAILURE        — nessuno sicuro e almeno una query A/AAAA fallita (riprova)
+$result->getMxHosts();  // only the safe hosts, in the original priority order
+$result->getError();    // if no host is safe:
+                        //   EmailError::NON_PUBLIC_MX_HOST — all discarded
+                        //   EmailError::DNS_FAILURE        — none safe and at least one A/AAAA query failed (retry)
 ```
 
-Se il dominio ha sia host pubblici sia host interni, l'indirizzo resta valido e `getMxHosts()` contiene solo quelli pubblici.
+If the domain has both public and internal hosts, the address remains valid and `getMxHosts()` contains only the public ones.
 
-**Costo.** Oltre alla query MX servono una query A e una AAAA per ogni host: un dominio con 5 MX (come `gmail.com`) richiede 11 query invece di 1. Se non ti connetti mai agli host MX e la latenza conta, o se valuti indirizzi di una rete interna i cui server di posta hanno davvero indirizzi privati, puoi disattivare il livello 2. Il livello 1 resta comunque attivo:
+**Cost.** In addition to the MX query, an A and an AAAA query are needed for each host: a domain with 5 MX records (like `gmail.com`) requires 11 queries instead of 1. If you never connect to MX hosts and latency matters, or if you're validating addresses on an internal network whose mail servers genuinely have private addresses, you can disable layer 2. Layer 1 remains active regardless:
 
 ```php
 use EmailValidator\Service\DnsMxResolver;
@@ -248,34 +248,34 @@ use EmailValidator\Service\EmailValidator;
 $validator = new EmailValidator(new DnsMxResolver(rejectNonPublicHosts: false));
 ```
 
-**Limite: DNS rebinding.** Il filtro verifica gli indirizzi al momento della validazione. Se poi ti connetti di nuovo *al nome*, un DNS malevolo può rispondere con un altro indirizzo (TTL a zero). Per chiudere anche questa finestra risolvi l'host una sola volta, riapplica il controllo `filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_GLOBAL_RANGE)` e connettiti a quell'IP.
+**Limitation: DNS rebinding.** The filter checks the addresses at validation time. If you later connect again *to the name*, a malicious DNS could respond with a different address (TTL zero). To close this window too, resolve the host once, reapply the check `filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_GLOBAL_RANGE)`, and connect to that IP.
 
-> **Cambio di comportamento.** Fino alla 1.0.2 il livello 2 era disattivato di default (`rejectNonPublicHosts: false`); vedi il [CHANGELOG](CHANGELOG.md). Chi valida indirizzi con server di posta su IP privati ora riceve `NON_PUBLIC_MX_HOST` e deve passare esplicitamente `rejectNonPublicHosts: false`.
+> **Behavior change.** Up to 1.0.2 layer 2 was disabled by default (`rejectNonPublicHosts: false`); see the [CHANGELOG](CHANGELOG.md). Anyone validating addresses with mail servers on private IPs now receives `NON_PUBLIC_MX_HOST` and must explicitly pass `rejectNonPublicHosts: false`.
 
-### Alias Gmail (opzionale, disattivato di default)
+### Gmail aliases (optional, disabled by default)
 
-Gmail recapita nella stessa casella indirizzi scritti in forme diverse: i punti nel local part sono ignorati e tutto ciò che segue un `+` è un tag di subaddressing, quindi `mario.rossi@gmail.com`, `mariorossi@gmail.com` e `mariorossi+shop@gmail.com` sono lo stesso destinatario; anche il dominio `googlemail.com` è solo un sinonimo di `gmail.com`. Se la tua applicazione vuole impedire agli utenti di registrarsi più volte sfruttando questi alias, puoi usare `isGmailAlias()` in autonomia:
+Gmail delivers to the same mailbox addresses written in different forms: dots in the local part are ignored and everything after a `+` is a subaddressing tag, so `mario.rossi@gmail.com`, `mariorossi@gmail.com`, and `mariorossi+shop@gmail.com` are the same recipient; the `googlemail.com` domain is also just a synonym for `gmail.com`. If your application wants to prevent users from registering multiple times by exploiting these aliases, you can use `isGmailAlias()` on its own:
 
 ```php
 $validator = new EmailValidator();
 
 $validator->isGmailAlias('mario.rossi+shop@gmail.com'); // true
-$validator->isGmailAlias('MarioRossi@gmail.com');        // true (Gmail ignora le maiuscole)
-$validator->isGmailAlias('mariorossi@gmail.com');        // false (forma canonica)
-$validator->isGmailAlias('mario.rossi@example.com');     // false (non è Gmail)
+$validator->isGmailAlias('MarioRossi@gmail.com');        // true (Gmail ignores case)
+$validator->isGmailAlias('mariorossi@gmail.com');        // false (canonical form)
+$validator->isGmailAlias('mario.rossi@example.com');     // false (not Gmail)
 ```
 
-Per riconoscere i duplicati è ancora più utile salvare la forma canonica accanto all'indirizzo e renderla univoca:
+To detect duplicates it's even more useful to store the canonical form alongside the address and make it unique:
 
 ```php
 $validator->canonicalGmailAddress('Mario.Rossi+shop@GoogleMail.com'); // "mariorossi@gmail.com"
-$validator->canonicalGmailAddress('mario@example.com');               // null (non è Gmail)
-$validator->canonicalGmailAddress('mario..rossi@gmail.com');          // null (indirizzo non valido)
+$validator->canonicalGmailAddress('mario@example.com');               // null (not Gmail)
+$validator->canonicalGmailAddress('mario..rossi@gmail.com');          // null (invalid address)
 ```
 
-Entrambi i metodi applicano gli stessi controlli di sanitize, sintassi e formato di `validate()` (esclusa la verifica MX): un indirizzo non valido non è mai un alias e non ha forma canonica, quindi forme come `mario..rossi@gmail.com` o `x@gmail.com.` non possono collidere con la casella reale `mariorossi@gmail.com`.
+Both methods apply the same sanitize, syntax, and format checks as `validate()` (excluding the MX check): an invalid address is never an alias and has no canonical form, so forms like `mario..rossi@gmail.com` or `x@gmail.com.` can never collide with the real mailbox `mariorossi@gmail.com`.
 
-Oppure chiedere esplicitamente a `validate()` di rifiutare gli alias, passando `rejectGmailAlias: true` al costruttore. **Il comportamento di default resta invariato** (gli alias sono accettati): è un'opzione che il client deve richiedere esplicitamente, non un vincolo imposto dalla libreria.
+Alternatively, you can explicitly ask `validate()` to reject aliases by passing `rejectGmailAlias: true` to the constructor. **The default behavior remains unchanged** (aliases are accepted): it's an option the client must explicitly request, not a constraint imposed by the library.
 
 ```php
 $validator = new EmailValidator(rejectGmailAlias: true);
@@ -286,51 +286,51 @@ $result->isValid();          // false
 $result->getError();         // EmailError::GMAIL_ALIAS
 ```
 
-## Sicurezza
+## Security
 
-Un indirizzo che supera `validate()` è **conforme alle RFC**, non automaticamente sicuro in ogni contesto.
+An address that passes `validate()` is **RFC-compliant**, not automatically safe in every context.
 
-- **Local part e shell.** Per RFC 5322 il local part può iniziare con `-` e contenere caratteri come `` ' ` | & $ { } ``: `-oQx@example.com` e ``a'|`$x`&{}@example.com`` sono validi. Non passare un indirizzo fornito dall'utente al quinto parametro di `mail()` (es. `-f$email`, vedi CVE-2016-10033: l'escaping interno di PHP non impedisce l'iniezione di argomenti) né a una shell senza `escapeshellarg()`, e usa sempre query parametrizzate in SQL. Se la tua applicazione non ha bisogno di questi caratteri, attiva la modalità restrittiva, che ammette solo `[A-Za-z0-9._+-]` e rifiuta il `-` iniziale (esclude indirizzi reali ma rari come `o'brien@example.com`):
+- **Local part and shell.** Per RFC 5322, the local part can start with `-` and contain characters like `` ' ` | & $ { } ``: `-oQx@example.com` and ``a'|`$x`&{}@example.com`` are valid. Never pass a user-supplied address to the fifth parameter of `mail()` (e.g. `-f$email`, see CVE-2016-10033: PHP's internal escaping does not prevent argument injection) nor to a shell without `escapeshellarg()`, and always use parameterized queries in SQL. If your application doesn't need these characters, enable the restrictive mode, which only allows `[A-Za-z0-9._+-]` and rejects a leading `-` (this excludes real but rare addresses like `o'brien@example.com`):
 
   ```php
   $validator = new EmailValidator(safeLocalPart: true);
   $validator->validate('-oQx@example.com')->getError(); // EmailError::UNSAFE_LOCAL_PART
   ```
 
-- **`getEmail()` sugli esiti falliti** restituisce ciò che l'utente ha inviato, inclusi `<`, `>`, `"` e CR/LF. Applica sempre l'escaping del contesto di destinazione (`htmlspecialchars()` in HTML, rimozione di CR/LF prima di scrivere nei log). Per un indirizzo pronto all'uso usa `getSanitizedEmail()`, che è `null` se la validazione è fallita.
+- **`getEmail()` on failed outcomes** returns exactly what the user submitted, including `<`, `>`, `"`, and CR/LF. Always apply escaping appropriate to the destination context (`htmlspecialchars()` in HTML, stripping CR/LF before writing to logs). For an address ready to use, use `getSanitizedEmail()`, which is `null` if validation failed.
 
-- **Host MX e SSRF.** Gli host restituiti da `getMxHosts()` sono scelti da chi controlla il dominio. Di default vengono scartati sia i target che non sono nomi di dominio sia gli host che risolvono verso indirizzi non pubblici; vedi [Protezione SSRF sugli host MX](#protezione-ssrf-sugli-host-mx-attiva-di-default) per i dettagli, il costo, come disattivarla e il limite del DNS rebinding (connettiti all'IP già verificato, non di nuovo al nome).
+- **MX hosts and SSRF.** The hosts returned by `getMxHosts()` are chosen by whoever controls the domain. By default, both targets that are not domain names and hosts that resolve to non-public addresses are discarded; see [SSRF protection on MX hosts](#ssrf-protection-on-mx-hosts-active-by-default) for details, the cost, how to disable it, and the DNS rebinding limitation (connect to the already-verified IP, not to the name again).
 
-- **Costo delle query DNS.** Ogni `validate()` esegue query DNS verso un dominio scelto da chi invia l'input: una query MX, più una A e una AAAA per ogni host MX con la protezione SSRF attiva. Su endpoint pubblici applica un rate limit.
+- **Cost of DNS queries.** Every `validate()` call performs DNS queries against a domain chosen by whoever submits the input: one MX query, plus one A and one AAAA query per MX host with SSRF protection active. Apply a rate limit on public endpoints.
 
-## Sviluppo
+## Development
 
 ```bash
 composer install
 
-composer test          # PHPUnit (i test che richiedono rete sono nel gruppo "network", escluso di default)
-composer test-coverage # PHPUnit con report di copertura (richiede Xdebug o PCOV)
-composer stan          # PHPStan a livello max
-composer cs             # PHP-CS-Fixer, regole @Symfony (dry-run)
-composer cs-fix         # applica le correzioni di stile
+composer test          # PHPUnit (tests requiring network are in the "network" group, excluded by default)
+composer test-coverage # PHPUnit with coverage report (requires Xdebug or PCOV)
+composer stan          # PHPStan at max level
+composer cs             # PHP-CS-Fixer, @Symfony rules (dry-run)
+composer cs-fix         # applies style fixes
 composer rector         # Rector (dry-run)
 composer check          # cs + stan + test
 ```
 
-La suite unitaria copre il 100% di classi, metodi e linee di `src/` (verificato con Xdebug). La risoluzione DNS è testata sostituendo la funzione globale `dns_get_record()` con un doppio controllabile (vedi `tests/Support/`), così ogni esito — MX valido, Null MX, nessun MX, implicit MX, errore DNS, host MX non pubblici — è verificato senza dipendere dalla rete; i test in `tests/Integration/` restano invece a fare da riscontro con DNS reale.
+The unit test suite covers 100% of classes, methods, and lines in `src/` (verified with Xdebug). DNS resolution is tested by replacing the global `dns_get_record()` function with a controllable double (see `tests/Support/`), so every outcome — valid MX, Null MX, no MX, implicit MX, DNS error, non-public MX hosts — is verified without depending on the network; the tests in `tests/Integration/` instead serve as a check against real DNS.
 
 ### CI
 
-Il workflow GitHub Actions (`.github/workflows/ci.yml`) gira su ogni push/PR su `main` con tre job:
+The GitHub Actions workflow (`.github/workflows/ci.yml`) runs on every push/PR to `main` with three jobs:
 
-- **lint** — `composer validate`, PHPStan (max), PHP-CS-Fixer (dry-run) e Rector (dry-run), eseguiti una sola volta sulla versione minima supportata (PHP 8.3).
-- **test** — la suite PHPUnit (con coverage) su una matrice PHP 8.3 / 8.4 / 8.5, per garantire la compatibilità dichiarata in `composer.json`.
-- **network-tests** — i test di integrazione con DNS reale (`tests/Integration/`), eseguiti ma non bloccanti (`continue-on-error`), perché dipendono dallo stato di domini di terze parti.
+- **lint** — `composer validate`, PHPStan (max), PHP-CS-Fixer (dry-run), and Rector (dry-run), run once on the minimum supported version (PHP 8.3).
+- **test** — the PHPUnit suite (with coverage) on a PHP 8.3 / 8.4 / 8.5 matrix, to ensure compatibility with what's declared in `composer.json`.
+- **network-tests** — integration tests with real DNS (`tests/Integration/`), run but non-blocking (`continue-on-error`), because they depend on the state of third-party domains.
 
-Le action di terze parti sono pinnate a SHA di commit, il checkout non conserva le credenziali (`persist-credentials: false`) e `.github/dependabot.yml` propone gli aggiornamenti settimanali di action e dipendenze Composer.
+Third-party actions are pinned to commit SHAs, checkout does not persist credentials (`persist-credentials: false`), and `.github/dependabot.yml` proposes weekly updates for actions and Composer dependencies.
 
-Nessun `composer.lock` è versionato: ogni run risolve le dipendenze contro i vincoli correnti di `composer.json`, così la CI segnala per prima eventuali incompatibilità con nuove versioni delle dipendenze.
+No `composer.lock` is committed: each run resolves dependencies against the current `composer.json` constraints, so CI is the first to flag any incompatibility with new dependency versions.
 
-## Licenza
+## License
 
-GPL-2.0-only. Vedi [LICENSE](LICENSE).
+GPL-2.0-only. See [LICENSE](LICENSE).
